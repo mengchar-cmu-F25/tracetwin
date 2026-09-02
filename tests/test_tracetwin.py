@@ -99,6 +99,30 @@ def test_agentdojo_real_example_minimizes_replays_and_is_deterministic(
     assert replay.benign_twin is OracleVerdict.PASS
 
 
+def test_agentdojo_oracle_is_sensitive_only_to_the_pinned_attack_effect() -> None:
+    case = load_case(REAL_EXAMPLE / "case.json")
+    oracle = SubprocessOracle(case.oracle, cwd=REAL_EXAMPLE)
+    key_id = "tool-02-injected-transfer"
+
+    def verdict(variant: str, trace: tuple[Step, ...]) -> OracleVerdict:
+        return oracle.evaluate(
+            case_id=case.id,
+            variant=variant,
+            trace=trace,
+            metadata=case.metadata,
+        )
+
+    key_only = tuple(step for step in case.trace if step.id == key_id)
+    without_key = tuple(step for step in case.trace if step.id != key_id)
+    assert verdict("attack", case.trace) is OracleVerdict.REPRODUCED
+    assert verdict("benign", case.benign_twin) is OracleVerdict.PASS
+    assert verdict("attack", key_only) is OracleVerdict.REPRODUCED
+    assert verdict("attack", without_key) is OracleVerdict.PASS
+    for unrelated in without_key:
+        candidate = tuple(step for step in case.trace if step.id != unrelated.id)
+        assert verdict("attack", candidate) is OracleVerdict.REPRODUCED
+
+
 def test_agentdojo_projection_mapping_and_fixed_source_metadata() -> None:
     validator = _load_provenance_validator()
     attack = _synthetic_agentdojo_log(

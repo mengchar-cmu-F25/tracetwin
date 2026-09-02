@@ -71,8 +71,10 @@ SHA-256 provenance. AgentDojo's own `InjectionTask0.security` predicate returns
 true for the attack effects and false for the clean effects. TraceTwin reduces
 the five-step pair to the single unauthorized `send_money` execution in 11
 oracle evaluations, replays it successfully, and produces identical bytes on
-two runs. This is evidence that the current mechanism works on one real trace,
-not evidence of broad framework coverage or production impact.
+two runs. A fixed-checkout release check matches the official and offline
+verdicts across eight key-step and unrelated-step sensitivity cases. This is
+evidence that the current mechanism works on one real trace, not evidence of
+broad framework coverage or production impact.
 
 ## v0.1 boundaries
 
@@ -83,22 +85,16 @@ detection, state snapshotting, trace importer, hosted UI, attack generation,
 LLM judging, or global-minimum guarantee. The result is 1-minimal with respect
 to deleting one retained step.
 
-## Success targets
+## Next evidence gate
 
-For the next validation phase, target three independent public benchmark
-families, at least 30 reproduced cases, and at least two distinct trace
-adapters. Every accepted artifact should replay deterministically in a clean
-environment; at least 90% should be smaller than its source; and a security
-reviewer should be able to identify the retained effect faster than from the
-original trace. Measure time-to-review rather than celebrating reduction ratio
-alone.
-
-## Next milestone
-
-Build one documented adapter interface by extracting common needs from two
-additional real benchmarks, then run a 30-case corpus in CI with a compact
-summary of reduction, replay stability, and adapter failures. Do not add a UI
-or plugin system before that corpus exposes a concrete need.
+Before expanding the product, ask three target users whether they have this
+problem. Continue only if at least one supplies a redacted attack/twin pair and
+deterministic oracle, or completes a private trial. Then test one additional
+benchmark family with three cases and a one-off adapter. Require exact
+provenance, replay stability, no verdict mismatch, reductions in at least two
+cases, and at least 25% lower median review time. A reusable adapter interface,
+30-case corpus, public release, and package publication are later decisions,
+not this milestone.
 
 ## Non-goals and risks
 
@@ -108,3 +104,6 @@ external state yields flaky evidence; and forced attack/clean alignment can
 hide meaningful divergence. Minimized traces may also remove explanatory
 context that humans still need. Provenance validation, explicit adapter fields,
 and retaining the original case reduce these risks but do not eliminate them.
+Repeated `SOURCE_DATE_EPOCH` builds currently produce identical wheels, but
+setuptools source archives differ in generated timestamps despite matching
+extracted files; do not claim byte-reproducible sdists.

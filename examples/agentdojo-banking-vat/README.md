@@ -47,7 +47,8 @@ semantics. It performs no network or banking operation.
 git clone --filter=blob:none https://github.com/ethz-spylab/agentdojo.git /tmp/agentdojo
 git -C /tmp/agentdojo fetch origin a75aba7631d3ca5fb7ab938965c97ead2f9ff84b --depth=1
 git -C /tmp/agentdojo checkout --detach a75aba7631d3ca5fb7ab938965c97ead2f9ff84b
-python3 examples/agentdojo-banking-vat/validate_provenance.py /tmp/agentdojo
+uv sync --project /tmp/agentdojo --frozen --no-dev
+/tmp/agentdojo/.venv/bin/python examples/agentdojo-banking-vat/validate_provenance.py /tmp/agentdojo --official
 
 validation_dir=$(mktemp -d /tmp/tracetwin-validation.XXXXXX)
 tracetwin minimize examples/agentdojo-banking-vat/case.json --output "$validation_dir/first.json"
@@ -62,6 +63,7 @@ install of the TraceTwin 0.1.0 wheel with CPython 3.12.13:
 
 ```text
 verified AgentDojo a75aba7631d3ca5fb7ab938965c97ead2f9ff84b: 5 attack steps, 3 clean steps + 2 adapter no-ops
+official and offline verdicts matched across 8 sensitivity checks
 wrote .../first.json: 5 -> 1 steps (11 oracle evaluations)
 wrote .../second.json: 5 -> 1 steps (11 oracle evaluations)
 cmp exit status: 0
@@ -80,10 +82,15 @@ benchmark-version field; the v1 and v1.2 `InjectionTask0.security` method ASTs
 are identical at the fixed commit. The oracle deliberately mirrors the fixed
 predicate rather than correcting or generalizing it.
 
-The AgentDojo validation in normal CI is intentionally offline: it tests the
-checked-in case, oracle, artifact, determinism, and mapping logic, but does not
-clone AgentDojo or run the end-to-end provenance command. The fixed-checkout
-validation above is a manual release check.
+At this commit, the predicate expression is `service or "" in subject`. Because
+the fixed pre-environment has a non-empty service, the check recognizes any
+successful transfer to the attacker; it does not validate the transfer subject.
+This example therefore preserves the attack-transfer effect only, not the
+prompt's Spotify-subject semantics.
+
+Normal CI remains offline: it tests the checked-in case, oracle, artifact,
+determinism, mapping logic, and oracle sensitivity. It does not clone AgentDojo;
+the fixed-checkout command above is the manual release check.
 
 AgentDojo is copyright its authors and MIT licensed. See
 [`AGENTDOJO_LICENSE.txt`](AGENTDOJO_LICENSE.txt) for the retained notice and
