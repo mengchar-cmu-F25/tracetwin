@@ -447,8 +447,8 @@ def write_artifact(path: str | Path, artifact: RegressionArtifact) -> None:
     )
     try:
         Path(path).write_text(output + "\n", encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise ArtifactWriteError(f"cannot write artifact to {path}: {exc}") from exc
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ArtifactWriteError(f"cannot write artifact: {exc}") from exc
 
 
 def _validate_metadata(value: Any) -> dict[str, Any]:

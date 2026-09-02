@@ -11,6 +11,7 @@ import pytest
 
 from tracetwin import (
     AgentCase,
+    ArtifactWriteError,
     CaseValidationError,
     OracleExecutionError,
     OracleSpec,
@@ -19,10 +20,12 @@ from tracetwin import (
     ReproductionError,
     Step,
     SubprocessOracle,
+    load_artifact,
     minimize_case,
     replay_artifact,
 )
 from tracetwin.cli import main
+from tracetwin.model import write_artifact
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -368,8 +371,44 @@ def test_cli_reports_artifact_write_failure(tmp_path: Path, capsys: pytest.Captu
 
 
 @pytest.mark.parametrize("command", ["minimize", "replay"])
-def test_cli_rejects_non_utf8_input_paths(
-    command: str, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("bad_path", "message"), [("\ud800", "UTF-8"), ("\0", "NUL")]
+)
+def test_cli_rejects_invalid_input_paths(
+    command: str,
+    bad_path: str,
+    message: str,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert main([command, "\ud800"]) == 2
-    assert "path must be valid UTF-8" in capsys.readouterr().err
+    assert main([command, bad_path]) == 2
+    assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("bad_path", "message"), [("\ud800", "UTF-8"), ("\0", "NUL")]
+)
+def test_cli_rejects_invalid_output_path(
+    tmp_path: Path,
+    bad_path: str,
+    message: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    case_path = tmp_path / "case.json"
+    case_path.write_text(json.dumps(case_dict()), encoding="utf-8")
+
+    assert main(["minimize", str(case_path), "--output", bad_path]) == 2
+    assert message in capsys.readouterr().err
+
+
+def test_cli_rejects_non_utf8_oracle_cwd(capsys: pytest.CaptureFixture[str]) -> None:
+    artifact = Path(__file__).parents[1] / "examples/leaky_agent/case.regression.json"
+
+    assert main(["replay", str(artifact), "--oracle-cwd", "\ud800"]) == 2
+    assert "oracle working directory path must be valid UTF-8" in capsys.readouterr().err
+
+
+def test_write_artifact_wraps_embedded_nul() -> None:
+    artifact_path = Path(__file__).parents[1] / "examples/leaky_agent/case.regression.json"
+
+    with pytest.raises(ArtifactWriteError, match="embedded null"):
+        write_artifact("\0", load_artifact(artifact_path))

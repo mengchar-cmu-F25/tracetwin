@@ -35,15 +35,18 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _path(value: Path, label: str, *, resolve: bool = False) -> Path:
+    text = str(value)
     try:
-        str(value).encode("utf-8")
+        text.encode("utf-8")
     except UnicodeError as exc:
         raise CaseValidationError(f"{label} path must be valid UTF-8 text") from exc
+    if "\0" in text:
+        raise CaseValidationError(f"{label} path must not contain NUL")
     if not resolve:
         return value
     try:
         return value.resolve()
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         raise CaseValidationError(f"cannot resolve {label} path: {exc}") from exc
 
 
