@@ -91,7 +91,10 @@ def test_agentdojo_real_example_minimizes_replays_and_is_deterministic(
     first = minimize_case(case, oracle)
     second = minimize_case(case, oracle)
 
-    assert [step.id for step in first.artifact.trace] == ["tool-02-injected-transfer"]
+    assert [step.id for step in first.artifact.trace] == [
+        "tool-02-injected-transfer",
+        "tool-05-vat-transfer",
+    ]
     assert first.artifact.to_dict() == second.artifact.to_dict()
     assert first.artifact.to_dict() == load_artifact(
         REAL_EXAMPLE / "case.regression.json"
@@ -107,10 +110,9 @@ def test_agentdojo_real_example_minimizes_replays_and_is_deterministic(
     assert replay.benign_twin is OracleVerdict.PASS
 
 
-def test_agentdojo_oracle_is_sensitive_only_to_the_pinned_attack_effect() -> None:
+def test_agentdojo_oracle_requires_attack_and_benign_effects() -> None:
     case = load_case(REAL_EXAMPLE / "case.json")
     oracle = SubprocessOracle(case.oracle, cwd=REAL_EXAMPLE)
-    key_id = "tool-02-injected-transfer"
 
     def verdict(variant: str, trace: tuple[Step, ...]) -> OracleVerdict:
         return oracle.evaluate(
@@ -120,15 +122,29 @@ def test_agentdojo_oracle_is_sensitive_only_to_the_pinned_attack_effect() -> Non
             metadata=case.metadata,
         )
 
-    key_only = tuple(step for step in case.trace if step.id == key_id)
-    without_key = tuple(step for step in case.trace if step.id != key_id)
     assert verdict("attack", case.trace) is OracleVerdict.REPRODUCED
     assert verdict("benign", case.benign_twin) is OracleVerdict.PASS
-    assert verdict("attack", key_only) is OracleVerdict.REPRODUCED
-    assert verdict("attack", without_key) is OracleVerdict.PASS
-    for unrelated in without_key:
-        candidate = tuple(step for step in case.trace if step.id != unrelated.id)
-        assert verdict("attack", candidate) is OracleVerdict.REPRODUCED
+
+    valid_subsets = []
+    for mask in range(1 << len(case.trace)):
+        attack = tuple(step for index, step in enumerate(case.trace) if mask & (1 << index))
+        benign = tuple(
+            step for index, step in enumerate(case.benign_twin) if mask & (1 << index)
+        )
+        if (
+            verdict("attack", attack) is OracleVerdict.REPRODUCED
+            and verdict("benign", benign) is OracleVerdict.PASS
+        ):
+            valid_subsets.append(tuple(step.id for step in attack))
+
+    minimal_subsets = [
+        candidate
+        for candidate in valid_subsets
+        if not any(set(other) < set(candidate) for other in valid_subsets)
+    ]
+    assert minimal_subsets == [
+        ("tool-02-injected-transfer", "tool-05-vat-transfer")
+    ]
 
 
 def test_agentdojo_projection_mapping_and_fixed_source_metadata() -> None:
@@ -188,6 +204,9 @@ def test_agentdojo_projection_mapping_and_fixed_source_metadata() -> None:
     )
     assert case["metadata"]["upstream"]["clean"]["sha256"] == (
         validator.EXPECTED_SHA256[validator.CLEAN_PATH]
+    )
+    assert case["metadata"]["utility_predicate"]["source_sha256"] == (
+        validator.EXPECTED_SHA256[validator.USER_TASK_PATH]
     )
 
 
