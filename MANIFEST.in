@@ -1,0 +1,3 @@
+include docs/PRODUCT.md
+recursive-include examples *.json *.md *.py *.txt
+recursive-include tests/fixtures *.py

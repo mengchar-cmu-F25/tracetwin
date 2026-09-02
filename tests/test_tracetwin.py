@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ from tracetwin import (
     Step,
     SubprocessOracle,
     load_artifact,
+    load_case,
     minimize_case,
     replay_artifact,
 )
@@ -28,6 +30,7 @@ from tracetwin.cli import main
 from tracetwin.model import write_artifact
 
 FIXTURES = Path(__file__).parent / "fixtures"
+REAL_EXAMPLE = Path(__file__).parents[1] / "examples" / "agentdojo-banking-vat"
 
 
 class TwinSensitiveOracle:
@@ -45,6 +48,115 @@ class EmptyFriendlyOracle:
     def evaluate(self, *, case_id, variant, trace, metadata):
         del case_id, trace, metadata
         return OracleVerdict.REPRODUCED if variant == "attack" else OracleVerdict.PASS
+
+
+def _load_provenance_validator():
+    path = REAL_EXAMPLE / "validate_provenance.py"
+    spec = importlib.util.spec_from_file_location("agentdojo_provenance", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _synthetic_agentdojo_log(calls: dict[tuple[int, int], tuple[str, dict, str]]) -> dict:
+    messages: list[dict] = [{"role": "assistant", "tool_calls": []} for _ in range(12)]
+    for (call_index, result_index), (function, args, call_id) in calls.items():
+        call = {"function": function, "args": args, "id": call_id}
+        messages[call_index] = {"role": "assistant", "tool_calls": [call]}
+        messages[result_index] = {
+            "role": "tool",
+            "content": f"result:{call_id}",
+            "tool_call_id": call_id,
+            "tool_call": call,
+            "error": None,
+        }
+    return {"messages": messages}
+
+
+def test_agentdojo_real_example_minimizes_replays_and_is_deterministic(
+    tmp_path: Path,
+) -> None:
+    case = load_case(REAL_EXAMPLE / "case.json")
+    oracle = SubprocessOracle(case.oracle, cwd=REAL_EXAMPLE)
+
+    first = minimize_case(case, oracle)
+    second = minimize_case(case, oracle)
+
+    assert [step.id for step in first.artifact.trace] == ["tool-02-injected-transfer"]
+    assert first.artifact.to_dict() == second.artifact.to_dict()
+    assert first.artifact.to_dict() == load_artifact(
+        REAL_EXAMPLE / "case.regression.json"
+    ).to_dict()
+    first_path = tmp_path / "first.json"
+    second_path = tmp_path / "second.json"
+    write_artifact(first_path, first.artifact)
+    write_artifact(second_path, second.artifact)
+    assert first_path.read_bytes() == second_path.read_bytes()
+    assert first_path.read_bytes() == (REAL_EXAMPLE / "case.regression.json").read_bytes()
+    replay = replay_artifact(first.artifact, oracle)
+    assert replay.attack is OracleVerdict.REPRODUCED
+    assert replay.benign_twin is OracleVerdict.PASS
+
+
+def test_agentdojo_projection_mapping_and_fixed_source_metadata() -> None:
+    validator = _load_provenance_validator()
+    attack = _synthetic_agentdojo_log(
+        {
+            (2, 3): ("list", {"n": 5}, "attack-1"),
+            (4, 5): ("injected", {}, "attack-2"),
+            (9, 10): ("vat", {}, "attack-5"),
+        }
+    )
+    shared_call = {"function": "iban", "args": {}, "id": "attack-3"}
+    attack["messages"][6] = {
+        "role": "assistant",
+        "tool_calls": [
+            shared_call,
+            {"function": "balance", "args": {}, "id": "attack-4"},
+        ],
+    }
+    result_calls = attack["messages"][6]["tool_calls"]
+    for result_index, call in [(7, result_calls[0]), (8, result_calls[1])]:
+        attack["messages"][result_index] = {
+            "role": "tool",
+            "content": f"result:{call['id']}",
+            "tool_call_id": call["id"],
+            "tool_call": call,
+            "error": None,
+        }
+    clean = _synthetic_agentdojo_log(
+        {
+            (2, 3): ("list", {"n": 5}, "clean-1"),
+            (4, 5): ("iban", {}, "clean-3"),
+            (6, 7): ("vat", {}, "clean-5"),
+        }
+    )
+
+    projected_attack, projected_clean = validator.build_projection(attack, clean)
+
+    assert [step["payload"]["tool_call"]["id"] for step in projected_attack] == [
+        "attack-1",
+        "attack-2",
+        "attack-3",
+        "attack-4",
+        "attack-5",
+    ]
+    assert [step["payload"]["observed"] for step in projected_clean] == [
+        True,
+        False,
+        True,
+        False,
+        True,
+    ]
+    case = json.loads((REAL_EXAMPLE / "case.json").read_text())
+    assert case["metadata"]["upstream"]["commit"] == validator.COMMIT
+    assert case["metadata"]["upstream"]["attack"]["sha256"] == (
+        validator.EXPECTED_SHA256[validator.ATTACK_PATH]
+    )
+    assert case["metadata"]["upstream"]["clean"]["sha256"] == (
+        validator.EXPECTED_SHA256[validator.CLEAN_PATH]
+    )
 
 
 def case_dict(*, benign_omega: str = "safe", attack_omega: str = "omega") -> dict:

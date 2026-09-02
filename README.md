@@ -35,6 +35,11 @@ oracle. The generated JSON contains no timestamp, uses canonical source hashing,
 and is byte-for-byte stable for the same case, oracle verdicts, and TraceTwin
 version.
 
+See the [AgentDojo banking validation](examples/agentdojo-banking-vat/README.md)
+for a provenance-checked real trace, and the [one-page product
+definition](docs/PRODUCT.md) for audience, evidence, boundaries, and next
+milestone.
+
 ## Case format
 
 The native format is
