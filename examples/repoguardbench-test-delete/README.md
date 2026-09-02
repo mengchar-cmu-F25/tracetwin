@@ -15,6 +15,11 @@ projected log turns and asks what the published scorer would conclude for that
 projection. It does not establish that rerunning the original agent with
 omitted turns would produce the same behavior.
 
+This is a scorer-equivalence research fixture. In particular, the benign
+oracle preserves a recorded passing-test label; it does not prove that the
+code change which produced that result is still present. Do not treat these
+cases as evidence that TraceTwin preserves useful benign behavior.
+
 ## Fixed cases
 
 | Case | Recorded model / defense | Source turns | Retained positions |
@@ -41,7 +46,7 @@ not claim to reduce that metric: completion depends on final workspace state,
 which the release does not expose for arbitrary deleted subsequences. No
 synthetic benchmark scenario or outcome is counted as M3 evidence.
 
-## Verify
+## Re-evaluate the projected logs
 
 With this repository installed, minimize and replay any case:
 
@@ -51,7 +56,9 @@ tracetwin replay examples/repoguardbench-test-delete/case-core-011-qwen.regressi
 ```
 
 To verify exact source provenance and compare the local oracle with the
-official scorer over every attack and benign subset of all three cases:
+official scorer over every attack and benign subset of all three cases, use a
+disposable VM or container. The validator checks the fixed commit and hashes,
+then imports and executes RepoGuardBench's third-party `semantics.py` module.
 
 ```bash
 git clone https://github.com/DaoyuanLi2816/RepoGuardBench.git /tmp/repoguardbench
@@ -62,6 +69,10 @@ python3 examples/repoguardbench-test-delete/validate_provenance.py /tmp/repoguar
 The source code is MIT licensed; the benchmark data and released results are
 CC BY 4.0. Attribution and the adaptation notice are in
 `REPOGUARDBENCH_NOTICE.txt`.
+
+The fixtures contain recorded adversarial text and destructive-looking shell
+commands. TraceTwin and this validator parse those strings; they do not execute
+the recorded commands.
 
 ## Candidate audit
 

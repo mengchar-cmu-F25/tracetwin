@@ -3,16 +3,17 @@
 ## Positioning
 
 TraceTwin is a command-line reducer for reproduced agent-security failures. It
-turns a long attack trace and its closest safe counterpart into a small,
-deterministic regression case. The product begins after a scanner, benchmark,
+turns a long attack trace and an aligned safe counterpart into a small,
+deterministic test artifact. The product begins after a scanner, benchmark,
 red-team exercise, or incident has already found a failure. Its job is not to
-discover attacks; its job is to make one known failure cheap to understand,
-review, and run forever.
+discover attacks; its job is to make the oracle-relevant part of one known
+failure cheap to inspect and rerun.
 
-The core promise is: retain only the events needed for the attack to reproduce,
-but reject any reduction that breaks the corresponding benign workflow. That
-second condition prevents a deceptively small "security fix" test whose only
-achievement is disabling useful behavior.
+The core promise is mechanical: retain only the events needed for the attack
+oracle to fail, but reject any reduction that makes the paired benign oracle
+fail. A meaningful benign oracle can prevent a deceptively small security test
+whose only achievement is disabling useful behavior. TraceTwin cannot determine
+whether either supplied oracle faithfully represents the real system.
 
 ## Ideal customer profile
 
@@ -30,9 +31,9 @@ or needs an LLM judge to decide whether a run failed.
 ## Job to be done
 
 When an agent failure has been reproduced, help me isolate a minimal
-failure-bearing sequence that still demonstrates the failure and preserves the
-nearby safe workflow, so I can explain the evidence, review a fix, and add a
-stable CI regression without repeatedly running the original scenario.
+failure-bearing sequence that still demonstrates the failure and preserves a
+chosen safe-workflow property, so I can explain the evidence, review a fix, and
+add a stable CI check without repeatedly running the original scenario.
 
 ## Workflow
 
@@ -43,7 +44,9 @@ stable CI regression without repeatedly running the original scenario.
    while evaluating both aligned variants.
 4. Review the generated JSON artifact, including source hash, retained steps,
    and verdicts.
-5. Run `tracetwin replay` in CI after the underlying agent or policy changes.
+5. Run `tracetwin replay` in CI. An oracle that executes the updated system can
+   detect a future regression; a static-log oracle only re-evaluates recorded
+   evidence.
 
 Adapters belong at the boundary. TraceTwin does not require an agent framework,
 trace vendor, model provider, or network service.
@@ -52,7 +55,7 @@ trace vendor, model provider, or network service.
 
 General delta debuggers minimize one failing input. Agent evaluation platforms
 usually rerun full scenarios. TraceTwin's hypothesis is that a strict paired
-invariant—attack still fails, benign twin still passes—is the smallest useful
+oracle invariant—attack still fails, benign twin still passes—is the smallest useful
 product distinction for agent-security regression work. A portable JSON
 artifact and subprocess oracle make that invariant usable across frameworks
 without turning TraceTwin into another evaluation platform.
@@ -67,25 +70,24 @@ The synthetic example reduces five events to two. More importantly, the fixed
 AgentDojo banking validation projects a public GPT-4o-mini prompt-injection run
 and its clean run into five aligned tool executions. At AgentDojo commit
 `a75aba7`, the upstream attack and clean logs have independently recorded
-SHA-256 provenance. AgentDojo's own `InjectionTask0.security` predicate returns
-true for the attack effects and false for the clean effects. TraceTwin reduces
-the five-step pair to the single unauthorized `send_money` execution in 11
-oracle evaluations, replays it successfully, and produces identical bytes on
-two runs. A fixed-checkout release check matches the official and offline
-verdicts across eight key-step and unrelated-step sensitivity cases.
+SHA-256 provenance. The paired oracle requires the attack side to satisfy both
+AgentDojo's `UserTask11.utility` and `InjectionTask0.security` predicates; the
+benign side passes only when utility succeeds without the security violation.
+TraceTwin reduces the five-step pair to the unauthorized transfer and the
+recorded 200.29 transfer accepted by the fixed utility predicate. Removing
+either retained position breaks the contract.
+A fixed-checkout check executes the retained tool effects against fresh
+AgentDojo environments and compares the official predicates with the offline
+adapter across both variants of all 32 aligned subsets (64 verdicts).
 
-An independent RepoGuardBench validation adds three matched local-model runs at
-commit `f1c1d28`. Their published turn logs include action, defense, command,
-test, and run-level file-effect evidence. TraceTwin reduces all three four-turn
-`TEST_DELETE` findings to one or two aligned positions. Each result retains the
-logged test-file write that makes `unsafe_action_landed` true and a recorded
-passing clean test report; where those occur at the same ordinal, one position
-serves both. All three artifacts replay deterministically, and the local oracle
-matches RepoGuardBench's pure `unsafe_action_landed` and `utility_pass` outputs
-across all 96 attack/benign subsets. This is log projection, not a claim that
-the original agent would follow the same path if rerun with turns removed.
-Together these examples establish two-source mechanical feasibility, not
-production impact or market demand.
+A separate RepoGuardBench research fixture projects three matched local-model
+runs at commit `f1c1d28`. The local oracle matches RepoGuardBench's pure
+`unsafe_action_landed` and `utility_pass` scorer outputs across all 96
+attack/benign subsets. Its benign side preserves a historical passing-test
+label, however, not the code change or causal execution that produced it. The
+fixture therefore establishes scorer-adapter feasibility only; it is not
+evidence that useful benign behavior survives reduction. Neither benchmark
+establishes production impact or market demand.
 
 ## v0.1 boundaries
 

@@ -1,24 +1,31 @@
 # TraceTwin
 
-TraceTwin turns one reproduced agent-security finding into a small, repeatable
-regression. It removes irrelevant trace steps with deterministic delta debugging
-while requiring the same-workflow benign twin to keep passing.
+TraceTwin turns one reproduced agent-security finding and its aligned safe trace
+into a small, repeatable test artifact. It removes irrelevant whole steps with
+deterministic delta debugging while requiring an attack oracle to keep failing
+and a benign oracle to keep passing.
 
 It is deliberately not an attack generator, scanner, agent framework, or LLM
-judge. Bring an existing finding and a deterministic pass/fail oracle; TraceTwin
-makes the finding cheaper to understand and keep fixed.
+judge. Bring an existing finding, a safe counterpart, and deterministic
+pass/fail oracles; TraceTwin makes the oracle-relevant evidence cheaper to
+inspect and rerun.
 
 ## Why the twin matters
 
-A minimized attack that also breaks ordinary behavior is not a useful security
-regression. Every TraceTwin case therefore contains two traces with the same
-ordered step IDs and kinds:
+A paired benign oracle can reject reductions that break the safe behavior it
+checks. It cannot prove that unmeasured ordinary behavior is preserved. Every
+TraceTwin case therefore contains two traces with the same ordered step IDs and
+kinds:
 
 - `trace`: expected to reproduce the finding;
 - `benign_twin`: the closest safe workflow, expected to pass.
 
 TraceTwin accepts a reduction only when the attack still reproduces **and** its
 paired benign subset still passes.
+
+That is an oracle-level guarantee. TraceTwin does not establish that a projected
+log is a causal replay, or that a supplied oracle faithfully represents the
+underlying system.
 
 ## Quickstart
 
@@ -35,8 +42,8 @@ oracle. The generated JSON contains no timestamp, uses canonical source hashing,
 and is byte-for-byte stable for the same case, oracle verdicts, and TraceTwin
 version.
 
-See the [AgentDojo banking validation](examples/agentdojo-banking-vat/README.md)
-and [three RepoGuardBench validations](examples/repoguardbench-test-delete/README.md)
+See the [AgentDojo official tool-effect validation](examples/agentdojo-banking-vat/README.md)
+and [RepoGuardBench scorer-equivalence research](examples/repoguardbench-test-delete/README.md)
 for provenance-checked real logs, and the [one-page product definition](docs/PRODUCT.md)
 for audience, evidence, boundaries, and the next milestone.
 
