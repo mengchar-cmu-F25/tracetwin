@@ -53,7 +53,7 @@
   "verification": {
     "attack": "reproduced",
     "benign_twin": "passed",
-    "oracle_evaluations": 16,
+    "oracle_evaluations": 17,
     "original_steps": 5,
     "retained_steps": 2
   }

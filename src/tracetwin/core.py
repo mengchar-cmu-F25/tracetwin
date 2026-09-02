@@ -8,7 +8,7 @@ import json
 import math
 from typing import Any, Callable, Mapping, Sequence, TypeVar
 
-from .errors import ReproductionError
+from .errors import CaseValidationError, ReproductionError
 from .model import AgentCase, RegressionArtifact, Step
 from .oracle import Oracle, OracleVerdict
 
@@ -19,13 +19,15 @@ def ddmin(items: Sequence[T], reproduces: Callable[[tuple[T, ...]], bool]) -> tu
     """Return a deterministic 1-minimal ordered subsequence using classic ddmin."""
 
     current = tuple(items)
+    if reproduces(()):
+        return ()
     granularity = 2
     while len(current) >= 2:
         chunk_size = math.ceil(len(current) / granularity)
         reduced = False
         for start in range(0, len(current), chunk_size):
             complement = current[:start] + current[start + chunk_size :]
-            if complement and reproduces(complement):
+            if reproduces(complement):
                 current = complement
                 granularity = max(granularity - 1, 2)
                 reduced = True
@@ -63,6 +65,10 @@ def _canonical_hash(case: AgentCase) -> str:
 
 def minimize_case(case: AgentCase, oracle: Oracle) -> MinimizeResult:
     """Minimize a reproduced trace while preserving a passing paired twin."""
+
+    if not isinstance(case, AgentCase):
+        raise CaseValidationError("case must be an AgentCase")
+    case.validate()
 
     twin_by_id = {step.id: step for step in case.benign_twin}
     cache: dict[tuple[str, str], OracleVerdict] = {}
@@ -124,6 +130,10 @@ def minimize_case(case: AgentCase, oracle: Oracle) -> MinimizeResult:
 
 def replay_artifact(artifact: RegressionArtifact, oracle: Oracle) -> ReplayResult:
     """Re-run both sides of a regression artifact against an oracle."""
+
+    if not isinstance(artifact, RegressionArtifact):
+        raise CaseValidationError("artifact must be a RegressionArtifact")
+    artifact.validate()
 
     attack = oracle.evaluate(
         case_id=artifact.case_id,

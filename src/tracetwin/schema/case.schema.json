@@ -28,7 +28,6 @@
   "$defs": {
     "steps": {
       "type": "array",
-      "minItems": 1,
       "items": {"$ref": "#/$defs/step"}
     },
     "step": {

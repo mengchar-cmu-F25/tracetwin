@@ -37,9 +37,12 @@ version.
 
 ## Case format
 
-The native format is [`schema/case.schema.json`](schema/case.schema.json). A step
-has an `id`, a free-form `kind`, and any JSON `payload`. IDs must be unique. The
-benign twin must repeat the trace's ordered `(id, kind)` pairs.
+The native format is
+[`case.schema.json`](src/tracetwin/schema/case.schema.json). It is included in
+the Python distribution under `tracetwin/schema/`. The schema checks JSON
+structure only; the runtime additionally requires unique step IDs and identical
+ordered `(id, kind)` pairs across the attack and benign traces. Both traces may
+be empty when the finding itself reproduces without any retained step.
 
 ```json
 {
@@ -74,21 +77,25 @@ standard input:
 ```
 
 Exit `0` means pass; exit `1` means the security finding reproduced. Any other
-exit code or a timeout is an operational error. The command should be
-deterministic and isolate or reset external state itself. Relative commands run
-from the case directory during minimization and from the artifact directory
-during replay; `replay --oracle-cwd DIR` can override that location.
+exit code, invalid UTF-8 output, launch failure, or timeout is an operational
+error. On POSIX, a timeout terminates the oracle process group; other platforms
+terminate the launched process. The command should be deterministic and isolate
+or reset external state itself. Relative commands run from the case directory
+during minimization and from the artifact directory during replay;
+`replay --oracle-cwd DIR` can override that location.
 
 Python callers can implement the small `Oracle` protocol directly instead of
 starting a subprocess.
 
 ## Algorithm and boundaries
 
-TraceTwin uses deterministic `ddmin` over ordered whole steps. Its output is
-1-minimal with respect to step deletion: after completion, no remaining single
-step can be deleted while preserving the paired oracle contract. It does not
-yet minimize fields inside a step, detect flaky oracles, snapshot tool state,
-or guarantee a globally smallest trace.
+TraceTwin uses deterministic `ddmin` over ordered whole steps, including the
+empty candidate. Its output is 1-minimal with respect to step deletion: after
+completion, no remaining single step can be deleted while preserving the paired
+oracle contract. An empty result means the finding reproduces and the twin
+passes without any trace step. TraceTwin does not yet minimize fields inside a
+step, detect flaky oracles, snapshot tool state, or guarantee a globally
+smallest trace.
 
 Only run trusted case files: their oracle command is executable code.
 

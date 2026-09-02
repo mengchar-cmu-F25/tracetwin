@@ -15,3 +15,7 @@ class OracleExecutionError(TraceTwinError):
 
 class ReproductionError(TraceTwinError):
     """Raised when the attack/twin contract cannot be reproduced."""
+
+
+class ArtifactWriteError(TraceTwinError):
+    """Raised when a regression artifact cannot be written."""

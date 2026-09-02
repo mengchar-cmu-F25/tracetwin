@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from enum import Enum
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 from typing import Any, Mapping, Protocol, Sequence
 
@@ -51,39 +53,67 @@ class SubprocessOracle:
             "trace": [step.to_dict() for step in trace],
             "metadata": dict(metadata),
         }
-        body = json.dumps(
-            request,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        )
         try:
-            completed = subprocess.run(
+            body = json.dumps(
+                request,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError) as exc:
+            raise OracleExecutionError(f"cannot encode oracle request: {exc}") from exc
+
+        try:
+            process = subprocess.Popen(
                 self.spec.command,
-                input=body,
-                text=True,
-                capture_output=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 cwd=self.cwd,
-                timeout=self.spec.timeout_seconds,
-                check=False,
+                start_new_session=os.name == "posix",
+            )
+        except (OSError, ValueError) as exc:
+            raise OracleExecutionError(f"cannot start oracle: {exc}") from exc
+
+        try:
+            stdout_bytes, stderr_bytes = process.communicate(
+                body, timeout=self.spec.timeout_seconds
             )
         except subprocess.TimeoutExpired as exc:
+            _kill_process_group(process)
             raise OracleExecutionError(
                 f"oracle timed out after {self.spec.timeout_seconds:g}s"
             ) from exc
-        except OSError as exc:
-            raise OracleExecutionError(f"cannot start oracle: {exc}") from exc
 
-        if completed.returncode == 0:
+        try:
+            stdout = stdout_bytes.decode("utf-8")
+            stderr = stderr_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise OracleExecutionError("oracle output is not valid UTF-8") from exc
+
+        if process.returncode == 0:
             return OracleVerdict.PASS
-        if completed.returncode == 1:
+        if process.returncode == 1:
             return OracleVerdict.REPRODUCED
 
-        details = (completed.stderr or completed.stdout).strip()
+        details = (stderr or stdout).strip()
         if len(details) > 500:
             details = details[:497] + "..."
         suffix = f": {details}" if details else ""
         raise OracleExecutionError(
-            f"oracle exited {completed.returncode}; only 0 (pass) and 1 (reproduced) are valid{suffix}"
+            f"oracle exited {process.returncode}; only 0 (pass) and 1 (reproduced) are valid{suffix}"
         )
+
+
+def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except ProcessLookupError:
+        pass
+    except OSError:
+        process.kill()
+    process.communicate()
