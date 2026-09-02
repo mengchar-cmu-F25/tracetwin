@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tracetwin.dev/schema/case-v1.json",
+  "title": "TraceTwin case v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "trace", "benign_twin", "oracle"],
+  "properties": {
+    "schema_version": {"const": "tracetwin.case/v1"},
+    "id": {"type": "string", "minLength": 1},
+    "metadata": {"type": "object"},
+    "trace": {"$ref": "#/$defs/steps"},
+    "benign_twin": {"$ref": "#/$defs/steps"},
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "default": 5}
+      }
+    }
+  },
+  "$defs": {
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/step"}
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "payload"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "payload": true
+      }
+    }
+  }
+}
