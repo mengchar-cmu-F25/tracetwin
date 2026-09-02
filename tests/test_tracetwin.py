@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import signal
 import sys
+import time
 
 import pytest
 
@@ -152,7 +155,11 @@ def test_direct_models_enforce_workflow_and_unique_ids() -> None:
         Step("one", "", {})
 
 
-def test_minimize_revalidates_mutable_direct_case() -> None:
+@pytest.mark.parametrize(
+    "bad_metadata",
+    [{"invalid": float("inf")}, {"nested": {1: "not-a-JSON-key"}}],
+)
+def test_minimize_revalidates_mutable_direct_case(bad_metadata: dict) -> None:
     step = Step("one", "event", {})
     case = AgentCase(
         "case",
@@ -161,10 +168,39 @@ def test_minimize_revalidates_mutable_direct_case() -> None:
         OracleSpec((sys.executable, "-c", "raise SystemExit(0)")),
         {"valid": True},
     )
-    case.metadata["invalid"] = float("inf")
+    case.metadata.update(bad_metadata)
 
     with pytest.raises(CaseValidationError, match="metadata"):
         minimize_case(case, EmptyFriendlyOracle())
+
+
+def test_direct_json_values_require_string_object_keys() -> None:
+    oracle = OracleSpec((sys.executable, "-c", "raise SystemExit(0)"))
+    step = Step("one", "event", {})
+
+    with pytest.raises(CaseValidationError, match="object keys must be strings"):
+        Step("bad", "event", {"nested": [{1: "value"}]})
+    with pytest.raises(CaseValidationError, match="object keys must be strings"):
+        AgentCase("case", (step,), (step,), oracle, {1: "value"})  # type: ignore[dict-item]
+
+
+def test_public_strings_must_be_utf8_encodable() -> None:
+    bad = "\ud800"
+    oracle = OracleSpec((sys.executable, "-c", "raise SystemExit(0)"))
+    step = Step("one", "event", {})
+
+    with pytest.raises(CaseValidationError, match="UTF-8"):
+        Step(bad, "event", {})
+    with pytest.raises(CaseValidationError, match="UTF-8"):
+        Step("one", bad, {})
+    with pytest.raises(CaseValidationError, match="UTF-8"):
+        AgentCase(bad, (step,), (step,), oracle)
+    with pytest.raises(CaseValidationError, match="UTF-8"):
+        OracleSpec((bad,), 2)
+    with pytest.raises(CaseValidationError, match="UTF-8"):
+        Step("one", "event", {"nested": bad})
+    with pytest.raises(CaseValidationError, match="UTF-8"):
+        AgentCase("case", (step,), (step,), oracle, {bad: "value"})
 
 
 @pytest.mark.parametrize("timeout", [True, 0, -1, float("inf"), 1e400])
@@ -260,6 +296,16 @@ def test_subprocess_oracle_wraps_launch_failure() -> None:
         oracle.evaluate(case_id="case", variant="attack", trace=(), metadata={})
 
 
+def test_subprocess_oracle_wraps_unicode_launch_failure(tmp_path: Path) -> None:
+    oracle = SubprocessOracle(
+        OracleSpec((sys.executable, "-c", "pass"), 2),
+        cwd=tmp_path / "\ud800",
+    )
+
+    with pytest.raises(OracleExecutionError, match="cannot start"):
+        oracle.evaluate(case_id="case", variant="attack", trace=(), metadata={})
+
+
 def test_subprocess_oracle_wraps_invalid_output_bytes() -> None:
     oracle = SubprocessOracle(
         OracleSpec(
@@ -270,6 +316,34 @@ def test_subprocess_oracle_wraps_invalid_output_bytes() -> None:
 
     with pytest.raises(OracleExecutionError, match="not valid UTF-8"):
         oracle.evaluate(case_id="case", variant="attack", trace=(), metadata={})
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX process groups")
+def test_timeout_is_bounded_when_detached_descendant_holds_output(tmp_path: Path) -> None:
+    pid_file = tmp_path / "descendant.pid"
+    child_code = "import time; time.sleep(5)"
+    parent_code = (
+        "import pathlib,subprocess,sys,time;"
+        f"child=subprocess.Popen([sys.executable,'-c',{child_code!r}],"
+        "stdin=subprocess.DEVNULL,stdout=sys.stdout,stderr=sys.stderr,"
+        "start_new_session=True);"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid));"
+        "time.sleep(5)"
+    )
+    oracle = SubprocessOracle(OracleSpec((sys.executable, "-c", parent_code), 0.5))
+    started = time.monotonic()
+
+    try:
+        with pytest.raises(OracleExecutionError, match="timed out"):
+            oracle.evaluate(case_id="case", variant="attack", trace=(), metadata={})
+        assert time.monotonic() - started < 2
+        assert pid_file.exists()
+    finally:
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_cli_minimize_and_replay(tmp_path: Path) -> None:
@@ -291,3 +365,11 @@ def test_cli_reports_artifact_write_failure(tmp_path: Path, capsys: pytest.Captu
 
     assert main(["minimize", str(case_path), "-o", str(tmp_path)]) == 2
     assert "cannot write artifact" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", ["minimize", "replay"])
+def test_cli_rejects_non_utf8_input_paths(
+    command: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main([command, "\ud800"]) == 2
+    assert "path must be valid UTF-8" in capsys.readouterr().err

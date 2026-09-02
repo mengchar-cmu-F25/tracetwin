@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import tempfile
 from typing import Any, Mapping, Protocol, Sequence
 
 from .errors import OracleExecutionError
@@ -64,27 +65,37 @@ class SubprocessOracle:
         except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError) as exc:
             raise OracleExecutionError(f"cannot encode oracle request: {exc}") from exc
 
-        try:
-            process = subprocess.Popen(
-                self.spec.command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=self.cwd,
-                start_new_session=os.name == "posix",
-            )
-        except (OSError, ValueError) as exc:
-            raise OracleExecutionError(f"cannot start oracle: {exc}") from exc
+        with (
+            tempfile.TemporaryFile() as stdin_file,
+            tempfile.TemporaryFile() as stdout_file,
+            tempfile.TemporaryFile() as stderr_file,
+        ):
+            stdin_file.write(body)
+            stdin_file.seek(0)
+            try:
+                process = subprocess.Popen(
+                    self.spec.command,
+                    stdin=stdin_file,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    cwd=self.cwd,
+                    start_new_session=os.name == "posix",
+                )
+            except (OSError, ValueError, UnicodeError) as exc:
+                raise OracleExecutionError(f"cannot start oracle: {exc}") from exc
 
-        try:
-            stdout_bytes, stderr_bytes = process.communicate(
-                body, timeout=self.spec.timeout_seconds
-            )
-        except subprocess.TimeoutExpired as exc:
-            _kill_process_group(process)
-            raise OracleExecutionError(
-                f"oracle timed out after {self.spec.timeout_seconds:g}s"
-            ) from exc
+            try:
+                process.wait(timeout=self.spec.timeout_seconds)
+            except subprocess.TimeoutExpired as exc:
+                _kill_process_group(process)
+                raise OracleExecutionError(
+                    f"oracle timed out after {self.spec.timeout_seconds:g}s"
+                ) from exc
+
+            stdout_file.seek(0)
+            stderr_file.seek(0)
+            stdout_bytes = stdout_file.read()
+            stderr_bytes = stderr_file.read()
 
         try:
             stdout = stdout_bytes.decode("utf-8")
@@ -107,13 +118,28 @@ class SubprocessOracle:
 
 
 def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
-    try:
-        if os.name == "posix":
+    killed_group = False
+    if os.name == "posix":
+        try:
             os.killpg(process.pid, signal.SIGKILL)
-        else:
-            process.kill()
-    except ProcessLookupError:
-        pass
-    except OSError:
+            killed_group = True
+        except OSError:
+            pass
+    if not killed_group:
+        _kill_process(process)
+
+    try:
+        process.wait(timeout=0.25)
+    except (OSError, subprocess.TimeoutExpired):
+        _kill_process(process)
+        try:
+            process.wait(timeout=0.25)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def _kill_process(process: subprocess.Popen[bytes]) -> None:
+    try:
         process.kill()
-    process.communicate()
+    except OSError:
+        pass

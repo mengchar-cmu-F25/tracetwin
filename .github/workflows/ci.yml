@@ -20,3 +20,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -e ".[dev]"
       - run: python -m pytest
+      - if: matrix.python-version == '3.12'
+        run: |
+          python -m build
+          unzip -l dist/*.whl | grep -q 'tracetwin/schema/case.schema.json'
+          tar -tzf dist/*.tar.gz | grep -q 'src/tracetwin/schema/case.schema.json'

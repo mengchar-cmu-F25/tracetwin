@@ -8,7 +8,7 @@ import sys
 from typing import Sequence
 
 from .core import minimize_case, replay_artifact
-from .errors import TraceTwinError
+from .errors import CaseValidationError, TraceTwinError
 from .model import load_artifact, load_case, write_artifact
 from .oracle import SubprocessOracle
 
@@ -34,15 +34,32 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _path(value: Path, label: str, *, resolve: bool = False) -> Path:
+    try:
+        str(value).encode("utf-8")
+    except UnicodeError as exc:
+        raise CaseValidationError(f"{label} path must be valid UTF-8 text") from exc
+    if not resolve:
+        return value
+    try:
+        return value.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise CaseValidationError(f"cannot resolve {label} path: {exc}") from exc
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "minimize":
-            case_path = args.case.resolve()
+            case_path = _path(args.case, "case", resolve=True)
             case = load_case(case_path)
             oracle = SubprocessOracle(case.oracle, cwd=case_path.parent)
             result = minimize_case(case, oracle)
-            output = args.output or case_path.with_name(f"{case_path.stem}.regression.json")
+            output = (
+                _path(args.output, "output")
+                if args.output
+                else case_path.with_name(f"{case_path.stem}.regression.json")
+            )
             write_artifact(output, result.artifact)
             print(
                 f"wrote {output}: {result.artifact.original_steps} -> "
@@ -51,9 +68,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
 
-        artifact_path = args.artifact.resolve()
+        artifact_path = _path(args.artifact, "artifact", resolve=True)
         artifact = load_artifact(artifact_path)
-        oracle_cwd = args.oracle_cwd or artifact_path.parent
+        oracle_cwd = (
+            _path(args.oracle_cwd, "oracle working directory")
+            if args.oracle_cwd
+            else artifact_path.parent
+        )
         oracle = SubprocessOracle(artifact.oracle, cwd=oracle_cwd)
         replay_artifact(artifact, oracle)
         print("replay passed: attack reproduced; benign twin passed")

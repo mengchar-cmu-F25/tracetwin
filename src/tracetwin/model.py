@@ -30,6 +30,10 @@ def _read_json(path: Path) -> Any:
 def _expect_object(value: Any, label: str) -> Mapping[str, Any]:
     if not isinstance(value, dict):
         raise CaseValidationError(f"{label} must be a JSON object")
+    for key in value:
+        if not isinstance(key, str):
+            raise CaseValidationError(f"{label} object keys must be strings")
+        _utf8_string(key, f"{label} object key")
     return value
 
 
@@ -52,12 +56,37 @@ def _check_keys(
 def _nonempty_string(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise CaseValidationError(f"{label} must be a non-empty string")
+    _utf8_string(value, label)
     return value
+
+
+def _utf8_string(value: str, label: str) -> None:
+    try:
+        value.encode("utf-8")
+    except UnicodeError as exc:
+        raise CaseValidationError(f"{label} must be valid UTF-8 text") from exc
+
+
+def _validate_json_tree(value: Any, label: str) -> None:
+    if isinstance(value, str):
+        _utf8_string(value, label)
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise CaseValidationError(f"{label} object keys must be strings")
+            _utf8_string(key, f"{label} object key")
+            _validate_json_tree(child, label)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _validate_json_tree(child, label)
 
 
 def _json_compatible(value: Any, label: str) -> None:
     try:
+        _validate_json_tree(value, label)
         json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except CaseValidationError:
+        raise
     except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError) as exc:
         raise CaseValidationError(f"{label} must be JSON-compatible: {exc}") from exc
 
@@ -140,6 +169,8 @@ class OracleSpec:
             ) from exc
         if not command or any(not isinstance(part, str) or not part for part in command):
             raise CaseValidationError("oracle.command must be a non-empty sequence of strings")
+        for index, part in enumerate(command):
+            _utf8_string(part, f"oracle.command[{index}]")
         timeout = self.timeout_seconds
         finite_timeout = False
         if not isinstance(timeout, bool) and isinstance(timeout, (int, float)):
