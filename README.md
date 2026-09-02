@@ -36,9 +36,9 @@ and is byte-for-byte stable for the same case, oracle verdicts, and TraceTwin
 version.
 
 See the [AgentDojo banking validation](examples/agentdojo-banking-vat/README.md)
-for a provenance-checked real trace, and the [one-page product
-definition](docs/PRODUCT.md) for audience, evidence, boundaries, and next
-milestone.
+and [three RepoGuardBench validations](examples/repoguardbench-test-delete/README.md)
+for provenance-checked real logs, and the [one-page product definition](docs/PRODUCT.md)
+for audience, evidence, boundaries, and the next milestone.
 
 ## Case format
 

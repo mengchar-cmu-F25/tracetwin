@@ -31,6 +31,14 @@ from tracetwin.model import write_artifact
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REAL_EXAMPLE = Path(__file__).parents[1] / "examples" / "agentdojo-banking-vat"
+REPOGUARD_EXAMPLE = (
+    Path(__file__).parents[1] / "examples" / "repoguardbench-test-delete"
+)
+REPOGUARD_CASES = (
+    ("case-core-011-qwen.json", ("turn-03", "turn-04"), "turn-04", "turn-03"),
+    ("case-core-022-qwen.json", ("turn-02",), "turn-02", "turn-02"),
+    ("case-core-001-llama.json", ("turn-03", "turn-04"), "turn-04", "turn-03"),
+)
 
 
 class TwinSensitiveOracle:
@@ -181,6 +189,82 @@ def test_agentdojo_projection_mapping_and_fixed_source_metadata() -> None:
     assert case["metadata"]["upstream"]["clean"]["sha256"] == (
         validator.EXPECTED_SHA256[validator.CLEAN_PATH]
     )
+
+
+@pytest.mark.parametrize(
+    ("case_name", "retained_ids", "attack_key", "benign_key"), REPOGUARD_CASES
+)
+def test_repoguard_real_examples_minimize_replay_and_are_deterministic(
+    tmp_path: Path,
+    case_name: str,
+    retained_ids: tuple[str, ...],
+    attack_key: str,
+    benign_key: str,
+) -> None:
+    case_path = REPOGUARD_EXAMPLE / case_name
+    artifact_path = case_path.with_name(
+        case_path.name.removesuffix(".json") + ".regression.json"
+    )
+    case = load_case(case_path)
+    oracle = SubprocessOracle(case.oracle, cwd=REPOGUARD_EXAMPLE)
+
+    first = minimize_case(case, oracle)
+    second = minimize_case(case, oracle)
+
+    assert len(case.trace) == 4
+    assert [step.id for step in first.artifact.trace] == list(retained_ids)
+    assert len(first.artifact.trace) < len(case.trace)
+    assert first.artifact.to_dict() == second.artifact.to_dict()
+    assert first.artifact.to_dict() == load_artifact(artifact_path).to_dict()
+    first_path = tmp_path / f"{case.id}-first.json"
+    second_path = tmp_path / f"{case.id}-second.json"
+    write_artifact(first_path, first.artifact)
+    write_artifact(second_path, second.artifact)
+    assert first_path.read_bytes() == second_path.read_bytes()
+    assert first_path.read_bytes() == artifact_path.read_bytes()
+    replay = replay_artifact(first.artifact, oracle)
+    assert replay.attack is OracleVerdict.REPRODUCED
+    assert replay.benign_twin is OracleVerdict.PASS
+
+    key_only = tuple(step for step in case.trace if step.id == attack_key)
+    without_key = tuple(step for step in case.trace if step.id != attack_key)
+    assert oracle.evaluate(
+        case_id=case.id,
+        variant="attack",
+        trace=key_only,
+        metadata=case.metadata,
+    ) is OracleVerdict.REPRODUCED
+    assert oracle.evaluate(
+        case_id=case.id,
+        variant="attack",
+        trace=without_key,
+        metadata=case.metadata,
+    ) is OracleVerdict.PASS
+    for unrelated in without_key:
+        candidate = tuple(step for step in case.trace if step.id != unrelated.id)
+        assert oracle.evaluate(
+            case_id=case.id,
+            variant="attack",
+            trace=candidate,
+            metadata=case.metadata,
+        ) is OracleVerdict.REPRODUCED
+
+    benign_key_only = tuple(step for step in case.benign_twin if step.id == benign_key)
+    benign_without_key = tuple(
+        step for step in case.benign_twin if step.id != benign_key
+    )
+    assert oracle.evaluate(
+        case_id=case.id,
+        variant="benign",
+        trace=benign_key_only,
+        metadata=case.metadata,
+    ) is OracleVerdict.PASS
+    assert oracle.evaluate(
+        case_id=case.id,
+        variant="benign",
+        trace=benign_without_key,
+        metadata=case.metadata,
+    ) is OracleVerdict.REPRODUCED
 
 
 def case_dict(*, benign_omega: str = "safe", attack_omega: str = "omega") -> dict:

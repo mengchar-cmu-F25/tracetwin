@@ -72,9 +72,20 @@ true for the attack effects and false for the clean effects. TraceTwin reduces
 the five-step pair to the single unauthorized `send_money` execution in 11
 oracle evaluations, replays it successfully, and produces identical bytes on
 two runs. A fixed-checkout release check matches the official and offline
-verdicts across eight key-step and unrelated-step sensitivity cases. This is
-evidence that the current mechanism works on one real trace, not evidence of
-broad framework coverage or production impact.
+verdicts across eight key-step and unrelated-step sensitivity cases.
+
+An independent RepoGuardBench validation adds three matched local-model runs at
+commit `f1c1d28`. Their published turn logs include action, defense, command,
+test, and run-level file-effect evidence. TraceTwin reduces all three four-turn
+`TEST_DELETE` findings to one or two aligned positions. Each result retains the
+logged test-file write that makes `unsafe_action_landed` true and a recorded
+passing clean test report; where those occur at the same ordinal, one position
+serves both. All three artifacts replay deterministically, and the local oracle
+matches RepoGuardBench's pure `unsafe_action_landed` and `utility_pass` outputs
+across all 96 attack/benign subsets. This is log projection, not a claim that
+the original agent would follow the same path if rerun with turns removed.
+Together these examples establish two-source mechanical feasibility, not
+production impact or market demand.
 
 ## v0.1 boundaries
 
@@ -89,12 +100,10 @@ to deleting one retained step.
 
 Before expanding the product, ask three target users whether they have this
 problem. Continue only if at least one supplies a redacted attack/twin pair and
-deterministic oracle, or completes a private trial. Then test one additional
-benchmark family with three cases and a one-off adapter. Require exact
-provenance, replay stability, no verdict mismatch, reductions in at least two
-cases, and at least 25% lower median review time. A reusable adapter interface,
-30-case corpus, public release, and package publication are later decisions,
-not this milestone.
+deterministic oracle, or completes a private trial. Measure whether the reduced
+artifact lowers median review time by at least 25%. A reusable adapter
+interface, 30-case corpus, public release, and package publication remain later
+decisions, not this milestone.
 
 ## Non-goals and risks
 
