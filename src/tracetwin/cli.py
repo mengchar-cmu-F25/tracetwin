@@ -61,13 +61,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "minimize":
             case_path = _path(args.case, "case", resolve=True)
             case = load_case(case_path)
-            oracle = SubprocessOracle(case.oracle, cwd=case_path.parent)
-            result = minimize_case(case, oracle)
             output = (
                 _path(args.output, "output")
                 if args.output
                 else case_path.with_name(f"{case_path.stem}.regression.json")
             )
+            try:
+                same_file = output.samefile(case_path)
+            except FileNotFoundError:
+                same_file = False
+            except OSError as exc:
+                raise CaseValidationError(f"cannot inspect output path: {exc}") from exc
+            if same_file:
+                raise CaseValidationError("output must not refer to the input case")
+            oracle = SubprocessOracle(case.oracle, cwd=case_path.parent)
+            result = minimize_case(case, oracle)
             write_artifact(output, result.artifact)
             print(
                 f"wrote {output}: {result.artifact.original_steps} -> "

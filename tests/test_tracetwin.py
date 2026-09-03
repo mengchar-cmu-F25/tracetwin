@@ -589,17 +589,88 @@ def test_timeout_is_bounded_when_detached_descendant_holds_output(tmp_path: Path
                 pass
 
 
-def test_cli_minimize_and_replay(tmp_path: Path) -> None:
+@pytest.mark.parametrize("existing_output", [False, True])
+def test_cli_minimize_and_replay(tmp_path: Path, existing_output: bool) -> None:
     raw = case_dict()
     case_path = tmp_path / "case.json"
     artifact_path = tmp_path / "regression.json"
     case_path.write_text(json.dumps(raw), encoding="utf-8")
+    original = case_path.read_bytes()
+    if existing_output:
+        artifact_path.write_text("previous independent artifact", encoding="utf-8")
 
     assert main(["minimize", str(case_path), "-o", str(artifact_path)]) == 0
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
     assert artifact["schema_version"] == "tracetwin.regression/v1"
     assert [step["id"] for step in artifact["trace"]] == ["required-a", "required-b"]
     assert main(["replay", str(artifact_path)]) == 0
+    assert case_path.read_bytes() == original
+
+
+@pytest.fixture
+def case_with_oracle_marker(tmp_path: Path) -> tuple[Path, Path]:
+    marker = tmp_path / "oracle-ran"
+    raw = case_dict()
+    raw["oracle"]["command"] = [
+        sys.executable,
+        "-c",
+        "from pathlib import Path; import runpy;"
+        f"Path({str(marker)!r}).write_text('executed');"
+        f"runpy.run_path({str(FIXTURES / 'oracle.py')!r}, run_name='__main__')",
+    ]
+    case_path = tmp_path / "case.json"
+    case_path.write_text(json.dumps(raw), encoding="utf-8")
+    return case_path, marker
+
+
+@pytest.mark.parametrize("alias", ["same-path", "dot-dot", "symlink", "hardlink"])
+def test_cli_preserves_case_when_output_is_same_file(
+    case_with_oracle_marker: tuple[Path, Path],
+    alias: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    case_path, marker = case_with_oracle_marker
+    original = case_path.read_bytes()
+    output = case_path
+    if alias == "dot-dot":
+        child = case_path.parent / "child"
+        child.mkdir()
+        output = child / ".." / case_path.name
+    elif alias in {"symlink", "hardlink"}:
+        output = case_path.with_name("alias.json")
+        if alias == "symlink":
+            output.symlink_to(case_path)
+        else:
+            output.hardlink_to(case_path)
+
+    code = main(["minimize", str(case_path), "--output", str(output)])
+    assert case_path.read_bytes() == original
+    assert not marker.exists()
+    assert code == 2
+    assert "output must not refer to the input case" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("failure", ["symlink-loop", "non-directory-parent"])
+def test_cli_reports_output_inspection_error_before_oracle(
+    case_with_oracle_marker: tuple[Path, Path],
+    failure: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    case_path, marker = case_with_oracle_marker
+    original = case_path.read_bytes()
+    if failure == "symlink-loop":
+        output = case_path.with_name("loop.json")
+        output.symlink_to(output.name)
+    else:
+        output = case_path / "artifact.json"
+
+    code = main(["minimize", str(case_path), "--output", str(output)])
+    assert case_path.read_bytes() == original
+    assert not marker.exists()
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "cannot inspect output path" in error
+    assert "Traceback" not in error
 
 
 def test_executable_demo_minimizes_and_preserves_benign_work(
