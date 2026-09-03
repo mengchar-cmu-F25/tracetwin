@@ -30,6 +30,7 @@ from tracetwin.cli import main
 from tracetwin.model import write_artifact
 
 FIXTURES = Path(__file__).parent / "fixtures"
+DEMO_EXAMPLE = Path(__file__).parents[1] / "examples" / "leaky_agent"
 REAL_EXAMPLE = Path(__file__).parents[1] / "examples" / "agentdojo-banking-vat"
 REPOGUARD_EXAMPLE = (
     Path(__file__).parents[1] / "examples" / "repoguardbench-test-delete"
@@ -599,6 +600,60 @@ def test_cli_minimize_and_replay(tmp_path: Path) -> None:
     assert artifact["schema_version"] == "tracetwin.regression/v1"
     assert [step["id"] for step in artifact["trace"]] == ["required-a", "required-b"]
     assert main(["replay", str(artifact_path)]) == 0
+
+
+def test_executable_demo_minimizes_and_preserves_benign_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TRACETWIN_DEMO_MODE", raising=False)
+    case = load_case(DEMO_EXAMPLE / "case.json")
+    oracle = SubprocessOracle(case.oracle, cwd=DEMO_EXAMPLE)
+    result = minimize_case(case, oracle)
+
+    assert [step.id for step in result.artifact.trace] == ["retrieval", "transfer"]
+    assert result.artifact.to_dict() == load_artifact(
+        DEMO_EXAMPLE / "case.regression.json"
+    ).to_dict()
+    assert replay_artifact(result.artifact, oracle).benign_twin is OracleVerdict.PASS
+    assert oracle.evaluate(
+        case_id=case.id, variant="benign", trace=(), metadata=case.metadata
+    ) is OracleVerdict.REPRODUCED
+
+
+@pytest.mark.parametrize(
+    ("mode", "exit_code", "message"),
+    [
+        ("vulnerable", 1, "attack trace still reproduces"),
+        ("fixed", 0, "attack no longer reproduced; benign twin passed"),
+        ("disable-all", 1, "benign twin did not pass"),
+        ("invalid-mode", 2, "oracle exited 2"),
+    ],
+)
+def test_fixed_check_with_executable_demo(
+    mode: str,
+    exit_code: int,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("TRACETWIN_DEMO_MODE", mode)
+    artifact_path = DEMO_EXAMPLE / "case.regression.json"
+    artifact = load_artifact(artifact_path)
+    oracle = SubprocessOracle(artifact.oracle, cwd=DEMO_EXAMPLE)
+
+    if exit_code == 0:
+        result = replay_artifact(artifact, oracle, expect_fixed=True)
+        assert result.attack is result.benign_twin is OracleVerdict.PASS
+        with pytest.raises(ReproductionError, match="did not reproduce"):
+            replay_artifact(artifact, oracle)
+    else:
+        error = OracleExecutionError if exit_code == 2 else ReproductionError
+        with pytest.raises(error, match=message):
+            replay_artifact(artifact, oracle, expect_fixed=True)
+
+    assert main(["replay", str(artifact_path), "--expect-fixed"]) == exit_code
+    captured = capsys.readouterr()
+    assert message in (captured.out if exit_code == 0 else captured.err)
 
 
 def test_cli_reports_artifact_write_failure(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

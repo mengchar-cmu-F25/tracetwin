@@ -44,9 +44,11 @@ add a stable CI check without repeatedly running the original scenario.
    while evaluating both aligned variants.
 4. Review the generated JSON artifact, including source hash, retained steps,
    and verdicts.
-5. Run `tracetwin replay` in CI. An oracle that executes the updated system can
-   detect a future regression; a static-log oracle only re-evaluates recorded
-   evidence.
+5. Run `tracetwin replay` to confirm the original reproduction, then run
+   `tracetwin replay --expect-fixed` against the updated system in CI. Fixed mode
+   requires the attack to stop reproducing and the benign workflow to pass;
+   operational errors remain failures. A static-log oracle only re-evaluates
+   recorded evidence and cannot establish that a system fix works.
 
 Adapters belong at the boundary. TraceTwin does not require an agent framework,
 trace vendor, model provider, or network service.
@@ -66,7 +68,12 @@ format instead of implementing deletion in their own harness.
 
 ## Evidence today
 
-The synthetic example reduces five events to two. More importantly, the fixed
+The synthetic example executes an in-memory invoice workflow and reduces five
+events to two. Its fixed-mode CI check fails on the vulnerable implementation,
+passes when untrusted invoice text no longer authorizes a payment, and rejects
+disabling the whole workflow because the benign invoice preview must still work.
+This is executable local workflow evidence, not model or production evidence.
+More importantly, the fixed
 AgentDojo banking validation projects a public GPT-4o-mini prompt-injection run
 and its clean run into five aligned tool executions. At AgentDojo commit
 `a75aba7`, the upstream attack and clean logs have independently recorded
@@ -98,14 +105,17 @@ detection, state snapshotting, trace importer, hosted UI, attack generation,
 LLM judging, or global-minimum guarantee. The result is 1-minimal with respect
 to deleting one retained step.
 
-## Next evidence gate
+## Next milestone and parallel validation
 
-Before expanding the product, ask three target users whether they have this
-problem. Continue only if at least one supplies a redacted attack/twin pair and
-deterministic oracle, or completes a private trial. Measure whether the reduced
-artifact lowers median review time by at least 25%. A reusable adapter
-interface, 30-case corpus, public release, and package publication remain later
-decisions, not this milestone.
+Ship an installable public alpha with the minimize → confirm reproduction →
+check fix loop, a runnable example, documented oracle errors, and passing tests.
+Safety, licensing, and truthful claims are release requirements; interviews and
+measured time savings are not prerequisites for development or public alpha.
+
+In parallel, ask target users to try a redacted attack/twin pair and deterministic
+oracle. Measure whether reduced artifacts save review time and which adapters
+remove real friction. Those observations should prioritize later features, not
+halt useful core work. No adoption or time-saving claim is supported yet.
 
 ## Non-goals and risks
 

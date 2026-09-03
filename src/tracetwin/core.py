@@ -128,8 +128,10 @@ def minimize_case(case: AgentCase, oracle: Oracle) -> MinimizeResult:
     return MinimizeResult(artifact=artifact, removed_step_ids=removed)
 
 
-def replay_artifact(artifact: RegressionArtifact, oracle: Oracle) -> ReplayResult:
-    """Re-run both sides of a regression artifact against an oracle."""
+def replay_artifact(
+    artifact: RegressionArtifact, oracle: Oracle, *, expect_fixed: bool = False
+) -> ReplayResult:
+    """Re-run a pair, optionally requiring the attack to pass after a fix."""
 
     if not isinstance(artifact, RegressionArtifact):
         raise CaseValidationError("artifact must be a RegressionArtifact")
@@ -147,8 +149,14 @@ def replay_artifact(artifact: RegressionArtifact, oracle: Oracle) -> ReplayResul
         trace=artifact.benign_twin,
         metadata=artifact.metadata,
     )
-    if attack is not OracleVerdict.REPRODUCED:
-        raise ReproductionError("regression attack trace did not reproduce")
+    expected_attack = OracleVerdict.PASS if expect_fixed else OracleVerdict.REPRODUCED
+    if attack is not expected_attack:
+        message = (
+            "regression attack trace still reproduces"
+            if expect_fixed
+            else "regression attack trace did not reproduce"
+        )
+        raise ReproductionError(message)
     if benign is not OracleVerdict.PASS:
         raise ReproductionError("regression benign twin did not pass")
     return ReplayResult(attack=attack, benign_twin=benign)

@@ -37,8 +37,10 @@ tracetwin minimize examples/leaky_agent/case.json
 tracetwin replay examples/leaky_agent/case.regression.json
 ```
 
-The demo reduces five synthetic events to the two events required by its local
-oracle. The generated JSON contains no timestamp, uses canonical source hashing,
+The demo executes a synthetic invoice workflow against a fresh in-memory ledger
+and reduces five events to the two needed to expose its authorization bug while
+keeping the benign invoice preview working. It does not call a model, network,
+or payment service. The generated JSON contains no timestamp, uses canonical source hashing,
 and is byte-for-byte stable for the same case, oracle verdicts, and TraceTwin
 version.
 
@@ -46,6 +48,36 @@ See the [AgentDojo official tool-effect validation](examples/agentdojo-banking-v
 and [RepoGuardBench scorer-equivalence research](examples/repoguardbench-test-delete/README.md)
 for provenance-checked real logs, and the [one-page product definition](docs/PRODUCT.md)
 for audience, evidence, boundaries, and the next milestone.
+
+## Check a fix in CI
+
+Default `replay` verifies the original finding still reproduces. After fixing the
+system behind your oracle, use `--expect-fixed`: both the attack and the benign
+twin must now pass. Disabling the whole workflow is not a passing fix.
+
+The same demo artifact exercises both sides against executable workflow logic:
+
+```bash
+# Before the fix: exits 1 because the unauthorized transfer still executes.
+TRACETWIN_DEMO_MODE=vulnerable tracetwin replay examples/leaky_agent/case.regression.json --expect-fixed
+# Correct fix: exits 0; blocks the transfer and still creates the invoice preview.
+TRACETWIN_DEMO_MODE=fixed tracetwin replay examples/leaky_agent/case.regression.json --expect-fixed
+# Bad fix: exits 1 because the normal invoice preview no longer works.
+TRACETWIN_DEMO_MODE=disable-all tracetwin replay examples/leaky_agent/case.regression.json --expect-fixed
+```
+
+| Fixed-mode result | CLI exit |
+| --- | --- |
+| Attack stopped, benign workflow passes | `0` |
+| Attack still reproduces or benign workflow fails | `1` |
+| Invalid input, oracle launch failure, timeout, or unexpected oracle exit | `2` |
+
+Commit the minimized artifact alongside your oracle and run `replay
+--expect-fixed` against the current implementation in CI. The demo mode variable
+is only an example switch; real oracles should execute your actual system and
+reset their state for each invocation. Python callers use
+`replay_artifact(artifact, oracle, expect_fixed=True)`. The artifact's verification
+fields record the original minimization, not the current fixed-mode result.
 
 ## Case format
 
@@ -88,13 +120,21 @@ standard input:
 }
 ```
 
-Exit `0` means pass; exit `1` means the security finding reproduced. Any other
+For the attack variant, exit `0` means the finding did not reproduce and exit `1`
+means it did. For the benign variant, exit `0` means the chosen safe-workflow
+property passed and exit `1` means it failed. Any other
 exit code, invalid UTF-8 output, launch failure, or timeout is an operational
 error. On POSIX, a timeout terminates the oracle process group; other platforms
 terminate the launched process. The command should be deterministic and isolate
 or reset external state itself. Relative commands run from the case directory
 during minimization and from the artifact directory during replay;
 `replay --oracle-cwd DIR` can override that location.
+
+Handle execution failures explicitly: an uncaught Python exception also exits
+`1`, so an oracle must catch those errors and use another exit code (the demo
+uses `2`). TraceTwin cannot distinguish a mistakenly reported verdict from a
+real one. Default replay retains its original exit contract: `0` for a
+reproducing attack with a passing twin, `2` for any failure.
 
 Python callers can implement the small `Oracle` protocol directly instead of
 starting a subprocess.
