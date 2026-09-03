@@ -30,12 +30,28 @@ underlying system.
 ## Quickstart
 
 TraceTwin needs Python 3.11 or newer and has no runtime dependencies.
+Run this complete example in a POSIX shell (macOS or Linux):
 
 ```bash
-python3 -m pip install -e .
+git clone https://github.com/mengchar-cmu-F25/tracetwin.git
+cd tracetwin
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install .
 tracetwin minimize examples/leaky_agent/case.json
 tracetwin replay examples/leaky_agent/case.regression.json
+TRACETWIN_DEMO_MODE=fixed tracetwin replay examples/leaky_agent/case.regression.json --expect-fixed
 ```
+
+For a version-pinned installation, the [v0.1.0 release](https://github.com/mengchar-cmu-F25/tracetwin/releases/tag/v0.1.0)
+provides a wheel. In an activated virtual environment:
+
+```bash
+python -m pip install https://github.com/mengchar-cmu-F25/tracetwin/releases/download/v0.1.0/tracetwin-0.1.0-py3-none-any.whl
+```
+
+The wheel installs the CLI, Python API, and case schema. Use the repository clone
+above for examples; they are not installed with the wheel.
 
 The demo executes a synthetic invoice workflow against a fresh in-memory ledger
 and reduces five events to the two needed to expose its authorization bug while
@@ -150,6 +166,16 @@ step, detect flaky oracles, snapshot tool state, or guarantee a globally
 smallest trace.
 
 Only run trusted case files: their oracle command is executable code.
+
+## License
+
+TraceTwin's code and synthetic demo are [MIT licensed](LICENSE). Third-party
+benchmark material retains its upstream license: AgentDojo's fixture includes
+its [MIT notice](examples/agentdojo-banking-vat/AGENTDOJO_LICENSE.txt), while the
+adapted RepoGuardBench data and result fixtures are **CC BY 4.0**, as detailed in
+their [attribution and license notice](examples/repoguardbench-test-delete/REPOGUARDBENCH_NOTICE.txt).
+The published wheel and source distribution exclude both third-party benchmark
+directories; the MIT code license does not relicense those repository fixtures.
 
 ## Development
 
