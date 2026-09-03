@@ -183,3 +183,23 @@ directories; the MIT code license does not relicense those repository fixtures.
 python3 -m pip install -e ".[dev]"
 python3 -m pytest
 ```
+
+### Offline synthetic scenarios
+
+No network or external repository is needed for these three CLI scenarios:
+noise plus a working control, reversed operation order, and a real exception in
+the benign workflow. They also check artifact-directory oracle resolution and
+reject a "fix" that disables normal work. Generate inspectable cases in a new
+directory, or run all assertions through the real CLI subprocess:
+
+```bash
+scenario_dir=$(mktemp -d)
+python3 examples/leaky_agent/generate_scenarios.py "$scenario_dir/cases"
+tracetwin minimize "$scenario_dir/cases/noisy.json"
+TRACETWIN_DEMO_MODE=fixed tracetwin replay "$scenario_dir/cases/noisy.regression.json" --expect-fixed
+python3 -m pytest tests/test_synthetic_scenarios.py -v
+```
+
+`reversed-order.json` must be rejected as non-reproducing; `broken-preview.json`
+must report an oracle execution error. Neither may create a regression artifact.
+The existing CI test command includes these checks automatically.
