@@ -105,10 +105,12 @@ detection, state snapshotting, trace importer, hosted UI, attack generation,
 LLM judging, or global-minimum guarantee. The result is 1-minimal with respect
 to deleting one retained step.
 
-## Next milestone and parallel validation
+## Delivery status and parallel validation
 
-Ship an installable public alpha with the minimize → confirm reproduction →
-check fix loop, a runnable example, documented oracle errors, and passing tests.
+The [public alpha](https://github.com/mengchar-cmu-F25/tracetwin/releases) now ships
+the minimize → confirm reproduction → check fix loop, a runnable example,
+documented oracle errors, and passing tests. Version 0.1.1 also rejects output
+paths that would overwrite the input case, including symbolic and hard links.
 Safety, licensing, and truthful claims are release requirements; interviews and
 measured time savings are not prerequisites for development or public alpha.
 
