@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ from tracetwin import (
     Step,
     SubprocessOracle,
     load_artifact,
+    load_case,
     minimize_case,
     replay_artifact,
 )
@@ -28,6 +30,16 @@ from tracetwin.cli import main
 from tracetwin.model import write_artifact
 
 FIXTURES = Path(__file__).parent / "fixtures"
+DEMO_EXAMPLE = Path(__file__).parents[1] / "examples" / "leaky_agent"
+REAL_EXAMPLE = Path(__file__).parents[1] / "examples" / "agentdojo-banking-vat"
+REPOGUARD_EXAMPLE = (
+    Path(__file__).parents[1] / "examples" / "repoguardbench-test-delete"
+)
+REPOGUARD_CASES = (
+    ("case-core-011-qwen.json", ("turn-03", "turn-04"), "turn-04", "turn-03"),
+    ("case-core-022-qwen.json", ("turn-02",), "turn-02", "turn-02"),
+    ("case-core-001-llama.json", ("turn-03", "turn-04"), "turn-04", "turn-03"),
+)
 
 
 class TwinSensitiveOracle:
@@ -45,6 +57,234 @@ class EmptyFriendlyOracle:
     def evaluate(self, *, case_id, variant, trace, metadata):
         del case_id, trace, metadata
         return OracleVerdict.REPRODUCED if variant == "attack" else OracleVerdict.PASS
+
+
+def _load_provenance_validator():
+    path = REAL_EXAMPLE / "validate_provenance.py"
+    spec = importlib.util.spec_from_file_location("agentdojo_provenance", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _synthetic_agentdojo_log(calls: dict[tuple[int, int], tuple[str, dict, str]]) -> dict:
+    messages: list[dict] = [{"role": "assistant", "tool_calls": []} for _ in range(12)]
+    for (call_index, result_index), (function, args, call_id) in calls.items():
+        call = {"function": function, "args": args, "id": call_id}
+        messages[call_index] = {"role": "assistant", "tool_calls": [call]}
+        messages[result_index] = {
+            "role": "tool",
+            "content": f"result:{call_id}",
+            "tool_call_id": call_id,
+            "tool_call": call,
+            "error": None,
+        }
+    return {"messages": messages}
+
+
+def test_agentdojo_real_example_minimizes_replays_and_is_deterministic(
+    tmp_path: Path,
+) -> None:
+    case = load_case(REAL_EXAMPLE / "case.json")
+    oracle = SubprocessOracle(case.oracle, cwd=REAL_EXAMPLE)
+
+    first = minimize_case(case, oracle)
+    second = minimize_case(case, oracle)
+
+    assert [step.id for step in first.artifact.trace] == [
+        "tool-02-injected-transfer",
+        "tool-05-vat-transfer",
+    ]
+    assert first.artifact.to_dict() == second.artifact.to_dict()
+    assert first.artifact.to_dict() == load_artifact(
+        REAL_EXAMPLE / "case.regression.json"
+    ).to_dict()
+    first_path = tmp_path / "first.json"
+    second_path = tmp_path / "second.json"
+    write_artifact(first_path, first.artifact)
+    write_artifact(second_path, second.artifact)
+    assert first_path.read_bytes() == second_path.read_bytes()
+    assert first_path.read_bytes() == (REAL_EXAMPLE / "case.regression.json").read_bytes()
+    replay = replay_artifact(first.artifact, oracle)
+    assert replay.attack is OracleVerdict.REPRODUCED
+    assert replay.benign_twin is OracleVerdict.PASS
+
+
+def test_agentdojo_oracle_requires_attack_and_benign_effects() -> None:
+    case = load_case(REAL_EXAMPLE / "case.json")
+    oracle = SubprocessOracle(case.oracle, cwd=REAL_EXAMPLE)
+
+    def verdict(variant: str, trace: tuple[Step, ...]) -> OracleVerdict:
+        return oracle.evaluate(
+            case_id=case.id,
+            variant=variant,
+            trace=trace,
+            metadata=case.metadata,
+        )
+
+    assert verdict("attack", case.trace) is OracleVerdict.REPRODUCED
+    assert verdict("benign", case.benign_twin) is OracleVerdict.PASS
+
+    valid_subsets = []
+    for mask in range(1 << len(case.trace)):
+        attack = tuple(step for index, step in enumerate(case.trace) if mask & (1 << index))
+        benign = tuple(
+            step for index, step in enumerate(case.benign_twin) if mask & (1 << index)
+        )
+        if (
+            verdict("attack", attack) is OracleVerdict.REPRODUCED
+            and verdict("benign", benign) is OracleVerdict.PASS
+        ):
+            valid_subsets.append(tuple(step.id for step in attack))
+
+    minimal_subsets = [
+        candidate
+        for candidate in valid_subsets
+        if not any(set(other) < set(candidate) for other in valid_subsets)
+    ]
+    assert minimal_subsets == [
+        ("tool-02-injected-transfer", "tool-05-vat-transfer")
+    ]
+
+
+def test_agentdojo_projection_mapping_and_fixed_source_metadata() -> None:
+    validator = _load_provenance_validator()
+    attack = _synthetic_agentdojo_log(
+        {
+            (2, 3): ("list", {"n": 5}, "attack-1"),
+            (4, 5): ("injected", {}, "attack-2"),
+            (9, 10): ("vat", {}, "attack-5"),
+        }
+    )
+    shared_call = {"function": "iban", "args": {}, "id": "attack-3"}
+    attack["messages"][6] = {
+        "role": "assistant",
+        "tool_calls": [
+            shared_call,
+            {"function": "balance", "args": {}, "id": "attack-4"},
+        ],
+    }
+    result_calls = attack["messages"][6]["tool_calls"]
+    for result_index, call in [(7, result_calls[0]), (8, result_calls[1])]:
+        attack["messages"][result_index] = {
+            "role": "tool",
+            "content": f"result:{call['id']}",
+            "tool_call_id": call["id"],
+            "tool_call": call,
+            "error": None,
+        }
+    clean = _synthetic_agentdojo_log(
+        {
+            (2, 3): ("list", {"n": 5}, "clean-1"),
+            (4, 5): ("iban", {}, "clean-3"),
+            (6, 7): ("vat", {}, "clean-5"),
+        }
+    )
+
+    projected_attack, projected_clean = validator.build_projection(attack, clean)
+
+    assert [step["payload"]["tool_call"]["id"] for step in projected_attack] == [
+        "attack-1",
+        "attack-2",
+        "attack-3",
+        "attack-4",
+        "attack-5",
+    ]
+    assert [step["payload"]["observed"] for step in projected_clean] == [
+        True,
+        False,
+        True,
+        False,
+        True,
+    ]
+    case = json.loads((REAL_EXAMPLE / "case.json").read_text())
+    assert case["metadata"]["upstream"]["commit"] == validator.COMMIT
+    assert case["metadata"]["upstream"]["attack"]["sha256"] == (
+        validator.EXPECTED_SHA256[validator.ATTACK_PATH]
+    )
+    assert case["metadata"]["upstream"]["clean"]["sha256"] == (
+        validator.EXPECTED_SHA256[validator.CLEAN_PATH]
+    )
+    assert case["metadata"]["utility_predicate"]["source_sha256"] == (
+        validator.EXPECTED_SHA256[validator.USER_TASK_PATH]
+    )
+
+
+@pytest.mark.parametrize(
+    ("case_name", "retained_ids", "attack_key", "benign_key"), REPOGUARD_CASES
+)
+def test_repoguard_real_examples_minimize_replay_and_are_deterministic(
+    tmp_path: Path,
+    case_name: str,
+    retained_ids: tuple[str, ...],
+    attack_key: str,
+    benign_key: str,
+) -> None:
+    case_path = REPOGUARD_EXAMPLE / case_name
+    artifact_path = case_path.with_name(
+        case_path.name.removesuffix(".json") + ".regression.json"
+    )
+    case = load_case(case_path)
+    oracle = SubprocessOracle(case.oracle, cwd=REPOGUARD_EXAMPLE)
+
+    first = minimize_case(case, oracle)
+    second = minimize_case(case, oracle)
+
+    assert len(case.trace) == 4
+    assert [step.id for step in first.artifact.trace] == list(retained_ids)
+    assert len(first.artifact.trace) < len(case.trace)
+    assert first.artifact.to_dict() == second.artifact.to_dict()
+    assert first.artifact.to_dict() == load_artifact(artifact_path).to_dict()
+    first_path = tmp_path / f"{case.id}-first.json"
+    second_path = tmp_path / f"{case.id}-second.json"
+    write_artifact(first_path, first.artifact)
+    write_artifact(second_path, second.artifact)
+    assert first_path.read_bytes() == second_path.read_bytes()
+    assert first_path.read_bytes() == artifact_path.read_bytes()
+    replay = replay_artifact(first.artifact, oracle)
+    assert replay.attack is OracleVerdict.REPRODUCED
+    assert replay.benign_twin is OracleVerdict.PASS
+
+    key_only = tuple(step for step in case.trace if step.id == attack_key)
+    without_key = tuple(step for step in case.trace if step.id != attack_key)
+    assert oracle.evaluate(
+        case_id=case.id,
+        variant="attack",
+        trace=key_only,
+        metadata=case.metadata,
+    ) is OracleVerdict.REPRODUCED
+    assert oracle.evaluate(
+        case_id=case.id,
+        variant="attack",
+        trace=without_key,
+        metadata=case.metadata,
+    ) is OracleVerdict.PASS
+    for unrelated in without_key:
+        candidate = tuple(step for step in case.trace if step.id != unrelated.id)
+        assert oracle.evaluate(
+            case_id=case.id,
+            variant="attack",
+            trace=candidate,
+            metadata=case.metadata,
+        ) is OracleVerdict.REPRODUCED
+
+    benign_key_only = tuple(step for step in case.benign_twin if step.id == benign_key)
+    benign_without_key = tuple(
+        step for step in case.benign_twin if step.id != benign_key
+    )
+    assert oracle.evaluate(
+        case_id=case.id,
+        variant="benign",
+        trace=benign_key_only,
+        metadata=case.metadata,
+    ) is OracleVerdict.PASS
+    assert oracle.evaluate(
+        case_id=case.id,
+        variant="benign",
+        trace=benign_without_key,
+        metadata=case.metadata,
+    ) is OracleVerdict.REPRODUCED
 
 
 def case_dict(*, benign_omega: str = "safe", attack_omega: str = "omega") -> dict:
@@ -360,6 +600,60 @@ def test_cli_minimize_and_replay(tmp_path: Path) -> None:
     assert artifact["schema_version"] == "tracetwin.regression/v1"
     assert [step["id"] for step in artifact["trace"]] == ["required-a", "required-b"]
     assert main(["replay", str(artifact_path)]) == 0
+
+
+def test_executable_demo_minimizes_and_preserves_benign_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TRACETWIN_DEMO_MODE", raising=False)
+    case = load_case(DEMO_EXAMPLE / "case.json")
+    oracle = SubprocessOracle(case.oracle, cwd=DEMO_EXAMPLE)
+    result = minimize_case(case, oracle)
+
+    assert [step.id for step in result.artifact.trace] == ["retrieval", "transfer"]
+    assert result.artifact.to_dict() == load_artifact(
+        DEMO_EXAMPLE / "case.regression.json"
+    ).to_dict()
+    assert replay_artifact(result.artifact, oracle).benign_twin is OracleVerdict.PASS
+    assert oracle.evaluate(
+        case_id=case.id, variant="benign", trace=(), metadata=case.metadata
+    ) is OracleVerdict.REPRODUCED
+
+
+@pytest.mark.parametrize(
+    ("mode", "exit_code", "message"),
+    [
+        ("vulnerable", 1, "attack trace still reproduces"),
+        ("fixed", 0, "attack no longer reproduced; benign twin passed"),
+        ("disable-all", 1, "benign twin did not pass"),
+        ("invalid-mode", 2, "oracle exited 2"),
+    ],
+)
+def test_fixed_check_with_executable_demo(
+    mode: str,
+    exit_code: int,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("TRACETWIN_DEMO_MODE", mode)
+    artifact_path = DEMO_EXAMPLE / "case.regression.json"
+    artifact = load_artifact(artifact_path)
+    oracle = SubprocessOracle(artifact.oracle, cwd=DEMO_EXAMPLE)
+
+    if exit_code == 0:
+        result = replay_artifact(artifact, oracle, expect_fixed=True)
+        assert result.attack is result.benign_twin is OracleVerdict.PASS
+        with pytest.raises(ReproductionError, match="did not reproduce"):
+            replay_artifact(artifact, oracle)
+    else:
+        error = OracleExecutionError if exit_code == 2 else ReproductionError
+        with pytest.raises(error, match=message):
+            replay_artifact(artifact, oracle, expect_fixed=True)
+
+    assert main(["replay", str(artifact_path), "--expect-fixed"]) == exit_code
+    captured = capsys.readouterr()
+    assert message in (captured.out if exit_code == 0 else captured.err)
 
 
 def test_cli_reports_artifact_write_failure(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

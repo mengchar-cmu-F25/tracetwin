@@ -8,7 +8,7 @@ import sys
 from typing import Sequence
 
 from .core import minimize_case, replay_artifact
-from .errors import CaseValidationError, TraceTwinError
+from .errors import CaseValidationError, ReproductionError, TraceTwinError
 from .model import load_artifact, load_case, write_artifact
 from .oracle import SubprocessOracle
 
@@ -26,6 +26,11 @@ def _parser() -> argparse.ArgumentParser:
 
     replay = subparsers.add_parser("replay", help="replay a regression artifact")
     replay.add_argument("artifact", type=Path)
+    replay.add_argument(
+        "--expect-fixed",
+        action="store_true",
+        help="require the attack to stop reproducing and the benign twin to pass",
+    )
     replay.add_argument(
         "--oracle-cwd",
         type=Path,
@@ -79,9 +84,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             else artifact_path.parent
         )
         oracle = SubprocessOracle(artifact.oracle, cwd=oracle_cwd)
-        replay_artifact(artifact, oracle)
-        print("replay passed: attack reproduced; benign twin passed")
+        replay_artifact(artifact, oracle, expect_fixed=args.expect_fixed)
+        attack_status = "no longer reproduced" if args.expect_fixed else "reproduced"
+        print(f"replay passed: attack {attack_status}; benign twin passed")
         return 0
+    except ReproductionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1 if args.command == "replay" and args.expect_fixed else 2
     except TraceTwinError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

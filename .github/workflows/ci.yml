@@ -25,5 +25,6 @@ jobs:
           python -m build
           unzip -l dist/*.whl | grep -q 'tracetwin/schema/case.schema.json'
           tar -tzf dist/*.tar.gz | grep -q 'src/tracetwin/schema/case.schema.json'
+          ! tar -tzf dist/*.tar.gz | grep -Eq 'examples/(agentdojo-banking-vat|repoguardbench-test-delete)'
           python -m pip install --force-reinstall dist/*.whl
           python -c "import json; from importlib.resources import files; json.loads(files('tracetwin').joinpath('schema/case.schema.json').read_text())"

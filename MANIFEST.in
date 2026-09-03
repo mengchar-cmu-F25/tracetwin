@@ -1,0 +1,5 @@
+include docs/PRODUCT.md
+prune examples/agentdojo-banking-vat
+prune examples/repoguardbench-test-delete
+recursive-include examples/leaky_agent *.json *.py
+recursive-include tests/fixtures *.py

@@ -1,18 +1,21 @@
 # TraceTwin
 
-TraceTwin turns one reproduced agent-security finding into a small, repeatable
-regression. It removes irrelevant trace steps with deterministic delta debugging
-while requiring the same-workflow benign twin to keep passing.
+TraceTwin turns one reproduced agent-security finding and its aligned safe trace
+into a small, repeatable test artifact. It removes irrelevant whole steps with
+deterministic delta debugging while requiring an attack oracle to keep failing
+and a benign oracle to keep passing.
 
 It is deliberately not an attack generator, scanner, agent framework, or LLM
-judge. Bring an existing finding and a deterministic pass/fail oracle; TraceTwin
-makes the finding cheaper to understand and keep fixed.
+judge. Bring an existing finding, a safe counterpart, and deterministic
+pass/fail oracles; TraceTwin makes the oracle-relevant evidence cheaper to
+inspect and rerun.
 
 ## Why the twin matters
 
-A minimized attack that also breaks ordinary behavior is not a useful security
-regression. Every TraceTwin case therefore contains two traces with the same
-ordered step IDs and kinds:
+A paired benign oracle can reject reductions that break the safe behavior it
+checks. It cannot prove that unmeasured ordinary behavior is preserved. Every
+TraceTwin case therefore contains two traces with the same ordered step IDs and
+kinds:
 
 - `trace`: expected to reproduce the finding;
 - `benign_twin`: the closest safe workflow, expected to pass.
@@ -20,20 +23,77 @@ ordered step IDs and kinds:
 TraceTwin accepts a reduction only when the attack still reproduces **and** its
 paired benign subset still passes.
 
+That is an oracle-level guarantee. TraceTwin does not establish that a projected
+log is a causal replay, or that a supplied oracle faithfully represents the
+underlying system.
+
 ## Quickstart
 
 TraceTwin needs Python 3.11 or newer and has no runtime dependencies.
+Run this complete example in a POSIX shell (macOS or Linux):
 
 ```bash
-python3 -m pip install -e .
+git clone https://github.com/mengchar-cmu-F25/tracetwin.git
+cd tracetwin
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install .
 tracetwin minimize examples/leaky_agent/case.json
 tracetwin replay examples/leaky_agent/case.regression.json
+TRACETWIN_DEMO_MODE=fixed tracetwin replay examples/leaky_agent/case.regression.json --expect-fixed
 ```
 
-The demo reduces five synthetic events to the two events required by its local
-oracle. The generated JSON contains no timestamp, uses canonical source hashing,
+For a version-pinned installation, the [v0.1.0 release](https://github.com/mengchar-cmu-F25/tracetwin/releases/tag/v0.1.0)
+provides a wheel. In an activated virtual environment:
+
+```bash
+python -m pip install https://github.com/mengchar-cmu-F25/tracetwin/releases/download/v0.1.0/tracetwin-0.1.0-py3-none-any.whl
+```
+
+The wheel installs the CLI, Python API, and case schema. Use the repository clone
+above for examples; they are not installed with the wheel.
+
+The demo executes a synthetic invoice workflow against a fresh in-memory ledger
+and reduces five events to the two needed to expose its authorization bug while
+keeping the benign invoice preview working. It does not call a model, network,
+or payment service. The generated JSON contains no timestamp, uses canonical source hashing,
 and is byte-for-byte stable for the same case, oracle verdicts, and TraceTwin
 version.
+
+See the [AgentDojo official tool-effect validation](examples/agentdojo-banking-vat/README.md)
+and [RepoGuardBench scorer-equivalence research](examples/repoguardbench-test-delete/README.md)
+for provenance-checked real logs, and the [one-page product definition](docs/PRODUCT.md)
+for audience, evidence, boundaries, and the next milestone.
+
+## Check a fix in CI
+
+Default `replay` verifies the original finding still reproduces. After fixing the
+system behind your oracle, use `--expect-fixed`: both the attack and the benign
+twin must now pass. Disabling the whole workflow is not a passing fix.
+
+The same demo artifact exercises both sides against executable workflow logic:
+
+```bash
+# Before the fix: exits 1 because the unauthorized transfer still executes.
+TRACETWIN_DEMO_MODE=vulnerable tracetwin replay examples/leaky_agent/case.regression.json --expect-fixed
+# Correct fix: exits 0; blocks the transfer and still creates the invoice preview.
+TRACETWIN_DEMO_MODE=fixed tracetwin replay examples/leaky_agent/case.regression.json --expect-fixed
+# Bad fix: exits 1 because the normal invoice preview no longer works.
+TRACETWIN_DEMO_MODE=disable-all tracetwin replay examples/leaky_agent/case.regression.json --expect-fixed
+```
+
+| Fixed-mode result | CLI exit |
+| --- | --- |
+| Attack stopped, benign workflow passes | `0` |
+| Attack still reproduces or benign workflow fails | `1` |
+| Invalid input, oracle launch failure, timeout, or unexpected oracle exit | `2` |
+
+Commit the minimized artifact alongside your oracle and run `replay
+--expect-fixed` against the current implementation in CI. The demo mode variable
+is only an example switch; real oracles should execute your actual system and
+reset their state for each invocation. Python callers use
+`replay_artifact(artifact, oracle, expect_fixed=True)`. The artifact's verification
+fields record the original minimization, not the current fixed-mode result.
 
 ## Case format
 
@@ -76,13 +136,21 @@ standard input:
 }
 ```
 
-Exit `0` means pass; exit `1` means the security finding reproduced. Any other
+For the attack variant, exit `0` means the finding did not reproduce and exit `1`
+means it did. For the benign variant, exit `0` means the chosen safe-workflow
+property passed and exit `1` means it failed. Any other
 exit code, invalid UTF-8 output, launch failure, or timeout is an operational
 error. On POSIX, a timeout terminates the oracle process group; other platforms
 terminate the launched process. The command should be deterministic and isolate
 or reset external state itself. Relative commands run from the case directory
 during minimization and from the artifact directory during replay;
 `replay --oracle-cwd DIR` can override that location.
+
+Handle execution failures explicitly: an uncaught Python exception also exits
+`1`, so an oracle must catch those errors and use another exit code (the demo
+uses `2`). TraceTwin cannot distinguish a mistakenly reported verdict from a
+real one. Default replay retains its original exit contract: `0` for a
+reproducing attack with a passing twin, `2` for any failure.
 
 Python callers can implement the small `Oracle` protocol directly instead of
 starting a subprocess.
@@ -98,6 +166,16 @@ step, detect flaky oracles, snapshot tool state, or guarantee a globally
 smallest trace.
 
 Only run trusted case files: their oracle command is executable code.
+
+## License
+
+TraceTwin's code and synthetic demo are [MIT licensed](LICENSE). Third-party
+benchmark material retains its upstream license: AgentDojo's fixture includes
+its [MIT notice](examples/agentdojo-banking-vat/AGENTDOJO_LICENSE.txt), while the
+adapted RepoGuardBench data and result fixtures are **CC BY 4.0**, as detailed in
+their [attribution and license notice](examples/repoguardbench-test-delete/REPOGUARDBENCH_NOTICE.txt).
+The published wheel and source distribution exclude both third-party benchmark
+directories; the MIT code license does not relicense those repository fixtures.
 
 ## Development
 

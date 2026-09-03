@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tracetwin"
 version = "0.1.0"
-description = "Minimize agent-security traces into deterministic, benign-paired regressions"
+description = "Minimize agent-security traces with deterministic paired oracles"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -17,6 +17,10 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = []
+
+[project.urls]
+Repository = "https://github.com/mengchar-cmu-F25/tracetwin"
+Issues = "https://github.com/mengchar-cmu-F25/tracetwin/issues"
 
 [project.optional-dependencies]
 dev = ["build>=1,<2", "pytest>=8,<10"]
