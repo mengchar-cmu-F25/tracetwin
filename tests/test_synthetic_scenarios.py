@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -17,21 +18,19 @@ def scenario_cli(tmp_path: Path):
     inputs = tmp_path / "case inputs"
     outputs = tmp_path / "artifact outputs"
     outputs.mkdir()
-    caller = tmp_path / "unrelated caller"
-    caller.mkdir()
     env = os.environ.copy()
     env.pop("TRACETWIN_DEMO_MODE", None)
     env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env["PATH"]
     env["PYTHONPATH"] = str(DEMO.parents[1] / "src")
     subprocess.run(
         [sys.executable, str(DEMO / "generate_scenarios.py"), str(inputs)],
-        check=True, capture_output=True, text=True, env=env, cwd=caller,
+        check=True, capture_output=True, text=True, env=env, cwd=tmp_path,
     )
 
     def cli(*args, mode="vulnerable"):
         return subprocess.run(
             [sys.executable, "-m", "tracetwin.cli", *map(str, args)],
-            capture_output=True, text=True, cwd=caller,
+            capture_output=True, text=True, cwd=inputs,
             env={**env, "TRACETWIN_DEMO_MODE": mode}, timeout=20,
         )
 
@@ -39,13 +38,28 @@ def scenario_cli(tmp_path: Path):
 
 
 def test_noisy_cli_pair_and_oracle_working_directory(scenario_cli) -> None:
-    inputs, outputs, cli, _ = scenario_cli
-    control = outputs / "control.json"
-    noisy = outputs / "noisy.json"
+    inputs, outputs, cli, env = scenario_cli
+    control = outputs / "-control artifact.json"
+    noisy = outputs / "-noisy artifact.json"
     for name, artifact, expected in (("control", control, 5), ("noisy", noisy, 8)):
-        result = cli("minimize", inputs / f"{name}.json", "--output", artifact)
+        relative_artifact = Path("..") / outputs.name / artifact.name
+        result = cli("minimize", f"{name}.json", "--output", relative_artifact)
         assert result.returncode == 0, result.stderr
         assert f"{expected} -> 2 steps" in result.stdout
+        if os.name == "posix":
+            prefix = "POSIX shell replay: "
+            replay_command = shlex.join(
+                ["tracetwin", "replay", str(artifact.resolve()), "--oracle-cwd", str(inputs)]
+            )
+            hint = next(line for line in result.stdout.splitlines() if line.startswith(prefix))
+            assert hint == prefix + replay_command
+            replay = subprocess.run(
+                ["/bin/sh", "-c", hint.removeprefix(prefix)],
+                capture_output=True, text=True, cwd=inputs, env=env, timeout=20,
+            )
+            assert replay.returncode == 0, replay.stderr
+        else:
+            assert "POSIX shell replay:" not in result.stdout
     pair = json.loads(noisy.read_text(encoding="utf-8"))
     baseline = json.loads(control.read_text(encoding="utf-8"))
     for variant in ("trace", "benign_twin"):
@@ -115,3 +129,10 @@ def test_benign_execution_fault_is_not_a_security_verdict(scenario_cli) -> None:
     assert result.returncode == 2
     assert "oracle exited 2" in result.stderr and "demo oracle error: 'amount'" in result.stderr
     assert "replay passed" not in result.stdout
+
+
+def test_same_directory_output_omits_replay_hint(scenario_cli) -> None:
+    inputs, _, cli, _ = scenario_cli
+    result = cli("minimize", "control.json")
+    assert result.returncode == 0, result.stderr
+    assert "POSIX shell replay:" not in result.stdout

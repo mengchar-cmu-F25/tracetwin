@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+import shlex
 import sys
 from typing import Sequence
 
@@ -62,12 +64,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             case_path = _path(args.case, "case", resolve=True)
             case = load_case(case_path)
             output = (
-                _path(args.output, "output")
+                args.output
                 if args.output
                 else case_path.with_name(f"{case_path.stem}.regression.json")
             )
+            output_path = _path(output, "output", resolve=True)
             try:
-                same_file = output.samefile(case_path)
+                same_file = output_path.samefile(case_path)
             except FileNotFoundError:
                 same_file = False
             except OSError as exc:
@@ -76,12 +79,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise CaseValidationError("output must not refer to the input case")
             oracle = SubprocessOracle(case.oracle, cwd=case_path.parent)
             result = minimize_case(case, oracle)
-            write_artifact(output, result.artifact)
+            write_artifact(output_path, result.artifact)
             print(
                 f"wrote {output}: {result.artifact.original_steps} -> "
                 f"{len(result.artifact.trace)} steps "
                 f"({result.artifact.oracle_evaluations} oracle evaluations)"
             )
+            if os.name == "posix" and output_path.parent != case_path.parent:
+                print(
+                    "POSIX shell replay: "
+                    + shlex.join(
+                        [
+                            "tracetwin",
+                            "replay",
+                            str(output_path),
+                            "--oracle-cwd",
+                            str(case_path.parent),
+                        ]
+                    )
+                )
             return 0
 
         artifact_path = _path(args.artifact, "artifact", resolve=True)

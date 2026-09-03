@@ -651,7 +651,7 @@ def test_cli_preserves_case_when_output_is_same_file(
 
 
 @pytest.mark.parametrize("failure", ["symlink-loop", "non-directory-parent"])
-def test_cli_reports_output_inspection_error_before_oracle(
+def test_cli_reports_output_path_error_before_oracle(
     case_with_oracle_marker: tuple[Path, Path],
     failure: str,
     capsys: pytest.CaptureFixture[str],
@@ -669,7 +669,7 @@ def test_cli_reports_output_inspection_error_before_oracle(
     assert not marker.exists()
     assert code == 2
     error = capsys.readouterr().err
-    assert "cannot inspect output path" in error
+    assert "output path" in error
     assert "Traceback" not in error
 
 
