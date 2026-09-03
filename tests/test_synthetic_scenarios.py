@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 
@@ -39,13 +40,21 @@ def scenario_cli(tmp_path: Path):
 
 
 def test_noisy_cli_pair_and_oracle_working_directory(scenario_cli) -> None:
-    inputs, outputs, cli, _ = scenario_cli
+    inputs, outputs, cli, env = scenario_cli
     control = outputs / "control.json"
     noisy = outputs / "noisy.json"
     for name, artifact, expected in (("control", control, 5), ("noisy", noisy, 8)):
         result = cli("minimize", inputs / f"{name}.json", "--output", artifact)
         assert result.returncode == 0, result.stderr
         assert f"{expected} -> 2 steps" in result.stdout
+        replay_command = shlex.join(
+            ["tracetwin", "replay", str(artifact), "--oracle-cwd", str(inputs)]
+        )
+        assert f"replay with: {replay_command}\n" in result.stdout
+        replay = subprocess.run(
+            shlex.split(replay_command), capture_output=True, text=True, env=env, timeout=20
+        )
+        assert replay.returncode == 0, replay.stderr
     pair = json.loads(noisy.read_text(encoding="utf-8"))
     baseline = json.loads(control.read_text(encoding="utf-8"))
     for variant in ("trace", "benign_twin"):
@@ -115,3 +124,10 @@ def test_benign_execution_fault_is_not_a_security_verdict(scenario_cli) -> None:
     assert result.returncode == 2
     assert "oracle exited 2" in result.stderr and "demo oracle error: 'amount'" in result.stderr
     assert "replay passed" not in result.stdout
+
+
+def test_same_directory_output_omits_replay_hint(scenario_cli) -> None:
+    inputs, _, cli, _ = scenario_cli
+    result = cli("minimize", inputs / "control.json")
+    assert result.returncode == 0, result.stderr
+    assert "replay with:" not in result.stdout

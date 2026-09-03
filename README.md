@@ -149,6 +149,14 @@ or reset external state itself. Relative commands run from the case directory
 during minimization and from the artifact directory during replay;
 `replay --oracle-cwd DIR` can override that location.
 
+When the artifact is written elsewhere, `minimize` prints the shell-quoted
+replay command needed to keep using the case directory, for example:
+
+```bash
+tracetwin minimize cases/finding.json --output "artifacts/finding regression.json"
+tracetwin replay 'artifacts/finding regression.json' --oracle-cwd /path/to/project/cases
+```
+
 Handle execution failures explicitly: an uncaught Python exception also exits
 `1`, so an oracle must catch those errors and use another exit code (the demo
 uses `2`). TraceTwin cannot distinguish a mistakenly reported verdict from a

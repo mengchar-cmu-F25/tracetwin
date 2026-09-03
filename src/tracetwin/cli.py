@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import shlex
 import sys
 from typing import Sequence
 
@@ -82,6 +83,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{len(result.artifact.trace)} steps "
                 f"({result.artifact.oracle_evaluations} oracle evaluations)"
             )
+            if output.resolve().parent != case_path.parent:
+                print(
+                    "replay with: "
+                    + shlex.join(
+                        [
+                            "tracetwin",
+                            "replay",
+                            str(output),
+                            "--oracle-cwd",
+                            str(case_path.parent),
+                        ]
+                    )
+                )
             return 0
 
         artifact_path = _path(args.artifact, "artifact", resolve=True)
