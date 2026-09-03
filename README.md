@@ -43,15 +43,18 @@ tracetwin replay examples/leaky_agent/case.regression.json
 TRACETWIN_DEMO_MODE=fixed tracetwin replay examples/leaky_agent/case.regression.json --expect-fixed
 ```
 
-For a version-pinned installation, the [v0.1.0 release](https://github.com/mengchar-cmu-F25/tracetwin/releases/tag/v0.1.0)
+For a version-pinned installation, the [v0.1.1 release](https://github.com/mengchar-cmu-F25/tracetwin/releases/tag/v0.1.1)
 provides a wheel. In an activated virtual environment:
 
 ```bash
-python -m pip install https://github.com/mengchar-cmu-F25/tracetwin/releases/download/v0.1.0/tracetwin-0.1.0-py3-none-any.whl
+python -m pip install https://github.com/mengchar-cmu-F25/tracetwin/releases/download/v0.1.1/tracetwin-0.1.1-py3-none-any.whl
 ```
 
 The wheel installs the CLI, Python API, and case schema. Use the repository clone
 above for examples; they are not installed with the wheel.
+
+`minimize --output` must name a different file from the input case. Paths and
+links referring to the input are rejected before the oracle runs.
 
 The demo executes a synthetic invoice workflow against a fresh in-memory ledger
 and reduces five events to the two needed to expose its authorization bug while
