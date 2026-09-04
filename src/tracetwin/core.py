@@ -8,7 +8,7 @@ import json
 import math
 from typing import Any, Callable, Mapping, Sequence, TypeVar
 
-from .errors import CaseValidationError, ReproductionError
+from .errors import CaseValidationError, OracleExecutionError, ReproductionError
 from .model import AgentCase, RegressionArtifact, Step
 from .oracle import Oracle, OracleVerdict
 
@@ -63,6 +63,12 @@ def _canonical_hash(case: AgentCase) -> str:
     return hashlib.sha256(body).hexdigest()
 
 
+def _require_valid(verdict: OracleVerdict) -> OracleVerdict:
+    if verdict is OracleVerdict.INVALID_CANDIDATE:
+        raise OracleExecutionError("oracle reported an invalid candidate outside reduction search")
+    return verdict
+
+
 def minimize_case(case: AgentCase, oracle: Oracle) -> MinimizeResult:
     """Minimize a reproduced trace while preserving a passing paired twin."""
 
@@ -94,9 +100,9 @@ def minimize_case(case: AgentCase, oracle: Oracle) -> MinimizeResult:
             evaluations += 1
         return cache[key]
 
-    if evaluate("attack", case.trace) is not OracleVerdict.REPRODUCED:
+    if _require_valid(evaluate("attack", case.trace)) is not OracleVerdict.REPRODUCED:
         raise ReproductionError("original trace did not reproduce the finding")
-    if evaluate("benign", case.benign_twin) is not OracleVerdict.PASS:
+    if _require_valid(evaluate("benign", case.benign_twin)) is not OracleVerdict.PASS:
         raise ReproductionError("full benign twin did not pass")
 
     def reproduces_with_passing_twin(candidate: tuple[Step, ...]) -> bool:
@@ -108,9 +114,9 @@ def minimize_case(case: AgentCase, oracle: Oracle) -> MinimizeResult:
     minimized = ddmin(case.trace, reproduces_with_passing_twin)
     minimized_twin = tuple(twin_by_id[step.id] for step in minimized)
     # A one-step input never enters ddmin, so make the final pair explicit and cached.
-    if evaluate("attack", minimized) is not OracleVerdict.REPRODUCED:
+    if _require_valid(evaluate("attack", minimized)) is not OracleVerdict.REPRODUCED:
         raise ReproductionError("minimized trace no longer reproduces the finding")
-    if evaluate("benign", minimized_twin) is not OracleVerdict.PASS:
+    if _require_valid(evaluate("benign", minimized_twin)) is not OracleVerdict.PASS:
         raise ReproductionError("minimized benign twin does not pass")
 
     retained = {step.id for step in minimized}
@@ -149,6 +155,8 @@ def replay_artifact(
         trace=artifact.benign_twin,
         metadata=artifact.metadata,
     )
+    _require_valid(attack)
+    _require_valid(benign)
     expected_attack = OracleVerdict.PASS if expect_fixed else OracleVerdict.REPRODUCED
     if attack is not expected_attack:
         message = (

@@ -18,6 +18,7 @@ from .model import OracleSpec, Step
 class OracleVerdict(Enum):
     PASS = "pass"
     REPRODUCED = "reproduced"
+    INVALID_CANDIDATE = "invalid_candidate"
 
 
 class Oracle(Protocol):
@@ -107,13 +108,18 @@ class SubprocessOracle:
             return OracleVerdict.PASS
         if process.returncode == 1:
             return OracleVerdict.REPRODUCED
+        if process.returncode == self.spec.invalid_candidate_exit_code:
+            return OracleVerdict.INVALID_CANDIDATE
 
         details = (stderr or stdout).strip()
         if len(details) > 500:
             details = details[:497] + "..."
         suffix = f": {details}" if details else ""
+        allowed = "0 (pass) and 1 (reproduced)"
+        if self.spec.invalid_candidate_exit_code is not None:
+            allowed += f", or {self.spec.invalid_candidate_exit_code} (invalid candidate)"
         raise OracleExecutionError(
-            f"oracle exited {process.returncode}; only 0 (pass) and 1 (reproduced) are valid{suffix}"
+            f"oracle exited {process.returncode}; only {allowed} are valid{suffix}"
         )
 
 

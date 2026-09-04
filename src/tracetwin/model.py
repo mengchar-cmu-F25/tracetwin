@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import math
+import os
 from pathlib import Path
 import re
+import tempfile
 from typing import Any, Mapping, Sequence
 
 from .errors import ArtifactWriteError, CaseValidationError
@@ -157,6 +159,7 @@ def _validate_twin_workflow(trace: Sequence[Step], twin: Sequence[Step]) -> None
 class OracleSpec:
     command: tuple[str, ...]
     timeout_seconds: float = 5.0
+    invalid_candidate_exit_code: int | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.command, (str, bytes)):
@@ -185,12 +188,17 @@ class OracleSpec:
             or timeout <= 0
         ):
             raise CaseValidationError("oracle.timeout_seconds must be a finite positive number")
+        code = self.invalid_candidate_exit_code
+        if code is not None and (
+            isinstance(code, bool) or not isinstance(code, int) or not 2 <= code <= 255
+        ):
+            raise CaseValidationError("oracle.invalid_candidate_exit_code must be an integer from 2 to 255")
         object.__setattr__(self, "command", command)
         object.__setattr__(self, "timeout_seconds", float(timeout))
 
     def validate(self, label: str = "oracle") -> None:
         try:
-            OracleSpec(self.command, self.timeout_seconds)
+            OracleSpec(self.command, self.timeout_seconds, self.invalid_candidate_exit_code)
         except CaseValidationError as exc:
             message = str(exc).replace("oracle.", f"{label}.", 1)
             raise CaseValidationError(message) from exc
@@ -202,20 +210,26 @@ class OracleSpec:
             data,
             label=label,
             required={"command"},
-            optional={"timeout_seconds"},
+            optional={"timeout_seconds", "invalid_candidate_exit_code"},
         )
         command = data["command"]
         if not isinstance(command, list):
             raise CaseValidationError(f"{label}.command must be a non-empty array of strings")
         timeout = data.get("timeout_seconds", 5.0)
+        code = data.get("invalid_candidate_exit_code")
+        if "invalid_candidate_exit_code" in data and code is None:
+            raise CaseValidationError(f"{label}.invalid_candidate_exit_code must be an integer from 2 to 255")
         try:
-            return cls(command=tuple(command), timeout_seconds=timeout)
+            return cls(command=tuple(command), timeout_seconds=timeout, invalid_candidate_exit_code=code)
         except CaseValidationError as exc:
             message = str(exc).replace("oracle.", f"{label}.", 1)
             raise CaseValidationError(message) from exc
 
     def to_dict(self) -> dict[str, Any]:
-        return {"command": list(self.command), "timeout_seconds": self.timeout_seconds}
+        result = {"command": list(self.command), "timeout_seconds": self.timeout_seconds}
+        if self.invalid_candidate_exit_code is not None:
+            result["invalid_candidate_exit_code"] = self.invalid_candidate_exit_code
+        return result
 
 
 @dataclass(frozen=True)
@@ -446,8 +460,20 @@ def write_artifact(path: str | Path, artifact: RegressionArtifact) -> None:
         allow_nan=False,
     )
     try:
-        Path(path).write_text(output + "\n", encoding="utf-8")
-    except (OSError, UnicodeError, ValueError) as exc:
+        target = Path(path).resolve()
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=target.parent,
+                prefix=".tracetwin-", suffix=".tmp", delete=False,
+            ) as stream:
+                temporary = Path(stream.name)
+                stream.write(output + "\n")
+            os.replace(temporary, target)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    except (OSError, UnicodeError, ValueError, RuntimeError) as exc:
         raise ArtifactWriteError(f"cannot write artifact: {exc}") from exc
 
 

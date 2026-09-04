@@ -1,4 +1,5 @@
 include docs/PRODUCT.md
+include docs/INTEGRATION.md
 prune examples/agentdojo-banking-vat
 prune examples/repoguardbench-test-delete
 recursive-include examples/leaky_agent *.json *.py
