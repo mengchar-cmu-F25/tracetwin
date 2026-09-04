@@ -43,11 +43,11 @@ tracetwin replay examples/leaky_agent/case.regression.json
 TRACETWIN_DEMO_MODE=fixed tracetwin replay examples/leaky_agent/case.regression.json --expect-fixed
 ```
 
-For a version-pinned installation, the [v0.1.2 release](https://github.com/mengchar-cmu-F25/tracetwin/releases/tag/v0.1.2)
+For a version-pinned installation, the [v0.1.3 release](https://github.com/mengchar-cmu-F25/tracetwin/releases/tag/v0.1.3)
 provides a wheel. In an activated virtual environment:
 
 ```bash
-python -m pip install https://github.com/mengchar-cmu-F25/tracetwin/releases/download/v0.1.2/tracetwin-0.1.2-py3-none-any.whl
+python -m pip install https://github.com/mengchar-cmu-F25/tracetwin/releases/download/v0.1.3/tracetwin-0.1.3-py3-none-any.whl
 ```
 
 The wheel installs the CLI, Python API, and case schema. Use the repository clone
@@ -55,6 +55,14 @@ above for examples; they are not installed with the wheel.
 
 `minimize --output` must name a different file from the input case. Paths and
 links referring to the input are rejected before the oracle runs.
+Artifacts are written to a temporary file in the destination directory, closed,
+then atomically replaced. A write, close, or replacement failure leaves an
+existing artifact intact and attempts to remove its temporary file; cleanup
+errors are reported. Output symlinks are
+resolved (the link remains); replacing a hardlink changes only that directory
+entry, not its other links. The new file uses private temporary-file permissions
+(normally `0600`), rather than preserving the old file's permissions. This is
+atomic replacement, not a power-loss durability guarantee.
 
 The demo executes a synthetic invoice workflow against a fresh in-memory ledger
 and reduces five events to the two needed to expose its authorization bug while
@@ -67,6 +75,7 @@ See the [AgentDojo official tool-effect validation](examples/agentdojo-banking-v
 and [RepoGuardBench scorer-equivalence research](examples/repoguardbench-test-delete/README.md)
 for provenance-checked real logs, and the [one-page product definition](docs/PRODUCT.md)
 for audience, evidence, boundaries, and the next milestone.
+For your own tests, follow the short [existing test → oracle → twin → CI tutorial](docs/INTEGRATION.md).
 
 ## Check a fix in CI
 
@@ -141,7 +150,7 @@ standard input:
 
 For the attack variant, exit `0` means the finding did not reproduce and exit `1`
 means it did. For the benign variant, exit `0` means the chosen safe-workflow
-property passed and exit `1` means it failed. Any other
+property passed and exit `1` means it failed. By default, any other
 exit code, invalid UTF-8 output, launch failure, or timeout is an operational
 error. On POSIX, a timeout terminates the oracle process group; other platforms
 terminate the launched process. The command should be deterministic and isolate
@@ -167,6 +176,34 @@ reproducing attack with a passing twin, `2` for any failure.
 
 Python callers can implement the small `Oracle` protocol directly instead of
 starting a subprocess.
+
+### Invalid candidates (opt-in)
+
+When deleting a setup event makes a candidate unexecutable, an adapter may
+explicitly declare a dedicated exit code in its case's `oracle` object:
+
+```json
+{"command": ["python3", "oracle.py"], "timeout_seconds": 5, "invalid_candidate_exit_code": 3}
+```
+
+Only the configured code means `INVALID_CANDIDATE`; it must be an integer from
+`2` through `255` (not `null`). Use a code reserved for this purpose: the demo
+uses `2` for execution errors, so do not configure `2` for that adapter. Without
+this field, all existing exit-code behavior is unchanged. Invalid UTF-8 output,
+launch failures, timeouts, and other unexpected codes remain operational errors.
+Python adapters opt in by returning `OracleVerdict.INVALID_CANDIDATE`; raised
+`OracleExecutionError` exceptions are never converted into skipped candidates.
+
+During reduction search, an invalid attack **or** benign candidate is skipped.
+An invalid full input, final pair, or replay is an operational error (CLI `2`,
+including `--expect-fixed`), never a passing test. Invalid full inputs produce
+no artifact. For example, the synthetic dependency test reduces
+`[setup, noise-a, use, noise-b]` to `[setup, use]` while rejecting `use` without
+`setup`. TraceTwin does not infer dependencies or repair invalid traces.
+
+The optional field is saved in the artifact. It requires TraceTwin 0.1.3 or newer;
+older readers reject it. Cases without it retain their existing serialized
+format, source hash, verdict handling, and artifact bytes.
 
 ## Algorithm and boundaries
 

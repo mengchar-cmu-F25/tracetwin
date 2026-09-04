@@ -21,7 +21,8 @@
           "minItems": 1,
           "items": {"type": "string", "minLength": 1}
         },
-        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "default": 5}
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "default": 5},
+        "invalid_candidate_exit_code": {"type": "integer", "minimum": 2, "maximum": 255}
       }
     }
   },
